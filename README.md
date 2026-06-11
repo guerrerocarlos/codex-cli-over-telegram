@@ -110,32 +110,47 @@ npm start
 
 Todex includes a systemd service named `codex-cli-over-telegram`.
 
-The service runs as user `gnu`, uses `/home/gnu` as `HOME`, and runs the app from `/home/gnu/codex-cli-over-telegram`.
+Pick the Linux user that should own Codex auth, config, repos, and runtime state. The examples below use variables so you can use your own account.
+
+```bash
+export SERVICE_USER="$USER"
+export SERVICE_GROUP="$(id -gn "$SERVICE_USER")"
+export SERVICE_HOME="$(getent passwd "$SERVICE_USER" | cut -d: -f6)"
+export APP_DIR="$SERVICE_HOME/codex-cli-over-telegram"
+export STATE_DIR="$SERVICE_HOME/.local/state/codex-cli-over-telegram"
+```
 
 1. Clone the repo into the service directory:
 
 ```bash
-cd /home/gnu
+cd "$SERVICE_HOME"
 git clone https://github.com/guerrerocarlos/codex-cli-over-telegram.git
-cd /home/gnu/codex-cli-over-telegram
+cd "$APP_DIR"
 npm install
 ```
 
-2. Make sure Codex works as `gnu`:
+2. Make sure Codex works as the service user:
 
 ```bash
 codex --version
 codex
 ```
 
-Log in or finish Codex setup if the CLI prompts you. The service uses `/home/gnu/.codex`.
+Log in or finish Codex setup if the CLI prompts you. The service uses `$SERVICE_HOME/.codex`.
 
 3. Install the systemd unit:
 
 ```bash
-sudo install -d -m 0750 -o root -g gnu /etc/codex-cli-over-telegram
-sudo install -d -m 0750 -o gnu -g gnu /home/gnu/.local/state/codex-cli-over-telegram
+sudo install -d -m 0750 -o root -g "$SERVICE_GROUP" /etc/codex-cli-over-telegram
+sudo install -d -m 0750 -o "$SERVICE_USER" -g "$SERVICE_GROUP" "$STATE_DIR"
 sudo cp deploy/systemd/codex-cli-over-telegram.service /etc/systemd/system/codex-cli-over-telegram.service
+sudo sed -i \
+  -e "s|^User=.*|User=$SERVICE_USER|" \
+  -e "s|^Group=.*|Group=$SERVICE_GROUP|" \
+  -e "s|^WorkingDirectory=.*|WorkingDirectory=$APP_DIR|" \
+  -e "s|^Environment=HOME=.*|Environment=HOME=$SERVICE_HOME|" \
+  -e "s|^ExecStart=.*|ExecStart=/usr/bin/node $APP_DIR/dist/index.js|" \
+  /etc/systemd/system/codex-cli-over-telegram.service
 sudo systemctl daemon-reload
 ```
 
@@ -151,8 +166,8 @@ Use this shape:
 TELEGRAM_BOT_TOKEN=123456:telegram-token
 ALLOWED_TELEGRAM_USER_IDS=12345678
 ALLOWED_TELEGRAM_CHAT_IDS=-1001234567890
-ALLOWED_REPO_ROOTS=/home/gnu
-DATABASE_PATH=/home/gnu/.local/state/codex-cli-over-telegram/state.sqlite
+ALLOWED_REPO_ROOTS=/path/to/allowed/repos
+DATABASE_PATH=/path/to/service-home/.local/state/codex-cli-over-telegram/state.sqlite
 CODEX_BIN=codex
 CODEX_BACKEND=app-server
 DEFAULT_SANDBOX_MODE=read-only
@@ -168,14 +183,14 @@ HEALTH_PORT=8787
 Then lock it down:
 
 ```bash
-sudo chown root:gnu /etc/codex-cli-over-telegram/env
+sudo chown root:"$SERVICE_GROUP" /etc/codex-cli-over-telegram/env
 sudo chmod 0640 /etc/codex-cli-over-telegram/env
 ```
 
 5. Deploy, enable startup, and start the service:
 
 ```bash
-./scripts/deploy.sh
+SERVICE_USER="$SERVICE_USER" SERVICE_GROUP="$SERVICE_GROUP" APP_DIR="$APP_DIR" STATE_DIR="$STATE_DIR" ./scripts/deploy.sh
 sudo systemctl enable codex-cli-over-telegram
 sudo systemctl restart codex-cli-over-telegram
 sudo systemctl status codex-cli-over-telegram --no-pager
