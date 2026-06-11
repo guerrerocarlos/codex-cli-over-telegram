@@ -41,7 +41,7 @@ export function createTelegramBot(
       return;
     }
 
-    if (!config.allowedTelegramUserIds.has(fromId) || !config.allowedTelegramChatIds.has(chatId)) {
+    if (!config.allowedTelegramUserIds.has(fromId)) {
       storage.audit({
         telegramUserId: fromId,
         chatId,
@@ -49,6 +49,28 @@ export function createTelegramBot(
         eventType: "unauthorized_message",
         details: { username: ctx.from?.username ?? null },
       });
+      return;
+    }
+
+    if (!config.allowedTelegramChatIds.has(chatId)) {
+      storage.audit({
+        telegramUserId: fromId,
+        chatId,
+        messageThreadId: ctx.message?.message_thread_id ?? null,
+        eventType: "unauthorized_chat",
+        details: { username: ctx.from?.username ?? null },
+      });
+      await reply(
+        ctx,
+        [
+          "This chat is not authorized.",
+          "",
+          "Add this value to .env, then restart the bot:",
+          "",
+          `ALLOWED_TELEGRAM_CHAT_IDS=${chatId}`,
+        ].join("\n"),
+        config,
+      );
       return;
     }
 
