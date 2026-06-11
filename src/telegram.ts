@@ -130,6 +130,7 @@ export function createTelegramBot(
           "",
           `Branch:\n${codeBlock(branch)}`,
           `Model:\n${codeBlock(await modelLabel(config, binding))}`,
+          `Plan mode:\n${codeBlock(formatPlanMode(binding.planMode))}`,
           `Mode:\n${codeBlock(effectiveSandboxMode(config, binding.sandboxMode))}`,
           isRepo ? null : "Git commands are unavailable until this path is initialized as a repo.",
           renameResult,
@@ -159,6 +160,7 @@ export function createTelegramBot(
         codeBlock(binding.repoPath),
         `Branch:\n${codeBlock(branch)}`,
         `Model:\n${codeBlock(await modelLabel(config, binding))}`,
+        `Plan mode:\n${codeBlock(formatPlanMode(binding.planMode))}`,
         `Mode:\n${codeBlock(effectiveSandboxMode(config, binding.sandboxMode))}`,
         `Codex session:\n${codeBlock(binding.codexThreadId ?? "(new)")}`,
         `Status:\n${codeBlock(binding.status)}`,
@@ -260,6 +262,45 @@ export function createTelegramBot(
     }
   });
 
+  bot.command("plan", async (ctx) => {
+    const binding = await requireBinding(ctx, config, storage);
+    if (!binding) {
+      return;
+    }
+
+    const requestedState = parsePlanMode(ctx.match.trim());
+    if (requestedState === null) {
+      await reply(
+        ctx,
+        [
+          `Plan mode is ${formatPlanMode(binding.planMode)}.`,
+          "",
+          "Usage:",
+          codeBlock(["/plan on", "/plan off"].join("\n")),
+        ].join("\n"),
+        config,
+      );
+      return;
+    }
+
+    storage.updateBindingPlanMode(binding.id, requestedState);
+    storage.audit({
+      telegramUserId: ctx.from?.id ?? null,
+      chatId: binding.chatId,
+      messageThreadId: binding.messageThreadId,
+      eventType: "plan_mode",
+      details: { planMode: requestedState },
+    });
+    await reply(
+      ctx,
+      [
+        `Plan mode ${requestedState ? "enabled" : "disabled"}.`,
+        "A fresh Codex session will start on the next run.",
+      ].join("\n"),
+      config,
+    );
+  });
+
   bot.command("mode", async (ctx) => {
     const binding = await requireBinding(ctx, config, storage);
     if (!binding) {
@@ -329,6 +370,7 @@ export function createTelegramBot(
           `Idle.`,
           `Repo:\n${codeBlock(binding.repoPath)}`,
           `Model:\n${codeBlock(await modelLabel(config, binding))}`,
+          `Plan mode:\n${codeBlock(formatPlanMode(binding.planMode))}`,
           `Mode:\n${codeBlock(effectiveSandboxMode(config, binding.sandboxMode))}`,
           usage,
         ].join("\n"),
@@ -341,6 +383,7 @@ export function createTelegramBot(
       [
         `Run #${active.id} is ${active.status}.`,
         `Model:\n${codeBlock(await modelLabel(config, binding))}`,
+        `Plan mode:\n${codeBlock(formatPlanMode(binding.planMode))}`,
         `Prompt:\n${codeBlock(truncateText(active.prompt, 700))}`,
         usage,
       ].join("\n"),
@@ -525,6 +568,7 @@ async function handlePrompt(
         `Started run #${run.id}.`,
         `Repo:\n${codeBlock(binding.repoPath)}`,
         `Model:\n${codeBlock(await modelLabel(config, binding))}`,
+        `Plan mode:\n${codeBlock(formatPlanMode(binding.planMode))}`,
         `Mode:\n${codeBlock(effectiveSandboxMode(config, binding.sandboxMode))}`,
       ].join("\n"),
       config,
@@ -589,6 +633,7 @@ async function executeRun(
       sandboxMode,
       approvalPolicy: binding.approvalPolicy,
       model: binding.model,
+      planMode: binding.planMode,
     })) {
       if (event.type === "started" && event.threadId) {
         storage.updateBindingThread(binding.id, event.threadId);
@@ -846,6 +891,20 @@ function parseMode(input: string): SandboxMode | null {
   return null;
 }
 
+function parsePlanMode(input: string): boolean | null {
+  if (["on", "true", "yes", "1", "plan"].includes(input)) {
+    return true;
+  }
+  if (["off", "false", "no", "0", "default"].includes(input)) {
+    return false;
+  }
+  return null;
+}
+
+function formatPlanMode(planMode: boolean): string {
+  return planMode ? "on" : "off";
+}
+
 function effectiveSandboxMode(config: AppConfig, sandboxMode: SandboxMode): SandboxMode {
   return config.alwaysYoloMode ? "danger-full-access" : sandboxMode;
 }
@@ -1006,6 +1065,7 @@ function helpText(): string {
     "/where - show repo, branch, mode, and git status",
     "/models - list available Codex models",
     "/model - show or set this topic's Codex model",
+    "/plan - show or toggle plan mode for this topic",
     "/mode read - use read-only Codex sandbox",
     "/mode write - allow Codex workspace edits",
     "/topic - rename this Telegram topic to the bound folder name",

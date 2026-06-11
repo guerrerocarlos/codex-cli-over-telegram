@@ -1,6 +1,7 @@
 import { AppServerClient } from "./appServerClient.js";
 import { AsyncQueue } from "./asyncQueue.js";
 import { describeCommandOutput } from "./commandOutput.js";
+import { PLAN_MODE_DEVELOPER_INSTRUCTIONS } from "./planMode.js";
 import type { CodexBackend, CodexRunEvent, CodexRunRequest, SandboxMode } from "./types.js";
 import { logger } from "./logger.js";
 
@@ -146,6 +147,7 @@ export class CodexAppServerBackend implements CodexBackend {
           threadId: request.codexThreadId,
           cwd: request.repoPath,
           model: request.model,
+          developerInstructions: request.planMode ? PLAN_MODE_DEVELOPER_INSTRUCTIONS : null,
           approvalPolicy: request.approvalPolicy,
           sandbox: request.sandboxMode,
         })) as RpcThreadResponse;
@@ -160,6 +162,7 @@ export class CodexAppServerBackend implements CodexBackend {
     return (await client.request("thread/start", {
       cwd: request.repoPath,
       model: request.model,
+      developerInstructions: request.planMode ? PLAN_MODE_DEVELOPER_INSTRUCTIONS : null,
       approvalPolicy: request.approvalPolicy,
       sandbox: request.sandboxMode,
     })) as RpcThreadResponse;

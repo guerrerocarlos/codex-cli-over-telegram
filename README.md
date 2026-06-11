@@ -63,6 +63,8 @@ Useful commands:
 /models
 /model
 /model gpt-5.5
+/plan on
+/plan off
 /mode read
 /mode write
 /status

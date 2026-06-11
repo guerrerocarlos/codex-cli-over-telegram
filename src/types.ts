@@ -10,6 +10,7 @@ export interface TopicBinding {
   repoPath: string;
   codexThreadId: string | null;
   model: string | null;
+  planMode: boolean;
   sandboxMode: SandboxMode;
   approvalPolicy: "never";
   status: string;
@@ -38,6 +39,7 @@ export interface CodexRunRequest {
   prompt: string;
   codexThreadId: string | null;
   model: string | null;
+  planMode: boolean;
   sandboxMode: SandboxMode;
   approvalPolicy: "never";
 }

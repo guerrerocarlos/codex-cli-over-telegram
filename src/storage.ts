@@ -9,6 +9,7 @@ interface BindingRow {
   repo_path: string;
   codex_thread_id: string | null;
   model: string | null;
+  plan_mode: number;
   sandbox_mode: SandboxMode;
   approval_policy: "never";
   status: string;
@@ -44,6 +45,7 @@ function mapBinding(row: BindingRow): TopicBinding {
     repoPath: row.repo_path,
     codexThreadId: row.codex_thread_id,
     model: row.model,
+    planMode: row.plan_mode === 1,
     sandboxMode: row.sandbox_mode,
     approvalPolicy: row.approval_policy,
     status: row.status,
@@ -93,6 +95,7 @@ export class Storage {
         repo_path TEXT NOT NULL,
         codex_thread_id TEXT,
         model TEXT,
+        plan_mode INTEGER NOT NULL DEFAULT 0,
         sandbox_mode TEXT NOT NULL DEFAULT 'read-only',
         approval_policy TEXT NOT NULL DEFAULT 'never',
         status TEXT NOT NULL DEFAULT 'idle',
@@ -135,6 +138,7 @@ export class Storage {
     `);
 
     this.addColumnIfMissing("topic_bindings", "model", "TEXT");
+    this.addColumnIfMissing("topic_bindings", "plan_mode", "INTEGER NOT NULL DEFAULT 0");
   }
 
   resetInterruptedRuns(): void {
@@ -217,6 +221,12 @@ export class Storage {
     this.db
       .prepare("UPDATE topic_bindings SET model = ?, codex_thread_id = NULL, updated_at = ? WHERE id = ?")
       .run(model, now(), bindingId);
+  }
+
+  updateBindingPlanMode(bindingId: number, planMode: boolean): void {
+    this.db
+      .prepare("UPDATE topic_bindings SET plan_mode = ?, codex_thread_id = NULL, updated_at = ? WHERE id = ?")
+      .run(planMode ? 1 : 0, now(), bindingId);
   }
 
   updateBindingThread(bindingId: number, codexThreadId: string | null): void {

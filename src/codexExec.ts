@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import readline from "node:readline";
 import { describeCommandOutput } from "./commandOutput.js";
+import { PLAN_MODE_DEVELOPER_INSTRUCTIONS } from "./planMode.js";
 import type { CodexBackend, CodexRunEvent, CodexRunRequest } from "./types.js";
 import { logger } from "./logger.js";
 
@@ -45,6 +46,9 @@ export class CodexExecBackend implements CodexBackend {
 
     if (request.model) {
       args.push("--model", request.model);
+    }
+    if (request.planMode) {
+      args.push("-c", `developer_instructions=${JSON.stringify(PLAN_MODE_DEVELOPER_INSTRUCTIONS)}`);
     }
 
     if (request.codexThreadId) {
