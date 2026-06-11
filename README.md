@@ -122,7 +122,7 @@ Use git worktrees if two topics need to work on the same repo concurrently.
 
 ```text
 /help
-/bind <absolute_path>
+/bind <absolute_path_or_~/path>
 /where
 /mode read
 /mode write

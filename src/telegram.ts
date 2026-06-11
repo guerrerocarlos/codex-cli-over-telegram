@@ -90,7 +90,7 @@ export function createTelegramBot(
 
     const requestedPath = ctx.match.trim();
     if (!requestedPath) {
-      await reply(ctx, "Usage: /bind /absolute/path/to/repo", config);
+      await reply(ctx, "Usage: /bind /absolute/path or /bind ~/path", config);
       return;
     }
 
