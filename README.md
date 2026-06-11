@@ -112,7 +112,25 @@ Todex includes a systemd service named `codex-cli-over-telegram`.
 
 The service runs as user `gnu`, uses `/home/gnu` as `HOME`, and runs the app from `/home/gnu/codex-cli-over-telegram`.
 
-Install the service:
+1. Clone the repo into the service directory:
+
+```bash
+cd /home/gnu
+git clone https://github.com/guerrerocarlos/codex-cli-over-telegram.git
+cd /home/gnu/codex-cli-over-telegram
+npm install
+```
+
+2. Make sure Codex works as `gnu`:
+
+```bash
+codex --version
+codex
+```
+
+Log in or finish Codex setup if the CLI prompts you. The service uses `/home/gnu/.codex`.
+
+3. Install the systemd unit:
 
 ```bash
 sudo install -d -m 0750 -o root -g gnu /etc/codex-cli-over-telegram
@@ -121,26 +139,59 @@ sudo cp deploy/systemd/codex-cli-over-telegram.service /etc/systemd/system/codex
 sudo systemctl daemon-reload
 ```
 
-Put production env vars in:
+4. Create the production env file:
 
 ```bash
 sudo nano /etc/codex-cli-over-telegram/env
+```
+
+Use this shape:
+
+```text
+TELEGRAM_BOT_TOKEN=123456:telegram-token
+ALLOWED_TELEGRAM_USER_IDS=12345678
+ALLOWED_TELEGRAM_CHAT_IDS=-1001234567890
+ALLOWED_REPO_ROOTS=/home/gnu
+DATABASE_PATH=/home/gnu/.local/state/codex-cli-over-telegram/state.sqlite
+CODEX_BIN=codex
+CODEX_BACKEND=app-server
+DEFAULT_SANDBOX_MODE=read-only
+CODEX_ALWAYS_YOLO=false
+ALLOW_UNTHREADED_CHATS=true
+MAX_PARALLEL_RUNS=4
+MAX_TELEGRAM_MESSAGE_CHARS=3500
+TELEGRAM_SEND_INTERVAL_MS=1500
+HEALTH_HOST=127.0.0.1
+HEALTH_PORT=8787
+```
+
+Then lock it down:
+
+```bash
 sudo chown root:gnu /etc/codex-cli-over-telegram/env
 sudo chmod 0640 /etc/codex-cli-over-telegram/env
 ```
 
-For the systemd service, set:
-
-```text
-DATABASE_PATH=/home/gnu/.local/state/codex-cli-over-telegram/state.sqlite
-```
-
-Deploy and enable startup:
+5. Deploy, enable startup, and start the service:
 
 ```bash
 ./scripts/deploy.sh
 sudo systemctl enable codex-cli-over-telegram
+sudo systemctl restart codex-cli-over-telegram
 sudo systemctl status codex-cli-over-telegram --no-pager
+```
+
+Useful checks:
+
+```bash
+curl -fsS http://127.0.0.1:8787/health
+journalctl -u codex-cli-over-telegram -f
+```
+
+After editing `/etc/codex-cli-over-telegram/env`, restart the service:
+
+```bash
+sudo systemctl restart codex-cli-over-telegram
 ```
 
 ## Health Check
