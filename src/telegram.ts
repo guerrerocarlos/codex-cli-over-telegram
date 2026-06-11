@@ -501,6 +501,13 @@ async function executeRun(
         continue;
       }
 
+      if (event.type === "command_completed") {
+        if (event.text.trim()) {
+          await sendText(bot, config, binding, codeBlock(truncateText(event.text, 1200)));
+        }
+        continue;
+      }
+
       if (event.type === "file_changed") {
         await sendText(bot, config, binding, `Changed:\n${codeBlock(event.text)}`);
         continue;

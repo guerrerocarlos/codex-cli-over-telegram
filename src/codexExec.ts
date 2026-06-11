@@ -1,5 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import readline from "node:readline";
+import { describeCommandOutput } from "./commandOutput.js";
 import type { CodexBackend, CodexRunEvent, CodexRunRequest } from "./types.js";
 import { logger } from "./logger.js";
 
@@ -12,6 +13,14 @@ interface JsonEvent {
     command?: string;
     path?: string;
     status?: string;
+    stdout?: string;
+    stderr?: string;
+    output?: string;
+    aggregatedOutput?: string;
+    formattedOutput?: string;
+    result?: unknown;
+    exitCode?: number;
+    exit_code?: number;
   };
   error?: string | { message?: string };
 }
@@ -170,10 +179,8 @@ export class CodexExecBackend implements CodexBackend {
     }
 
     if (event.type === "item.completed" && item.type === "command_execution") {
-      return {
-        type: "command_completed",
-        text: item.command ? `${item.command} completed` : "Command completed",
-      };
+      const text = describeCommandOutput(item);
+      return text ? { type: "command_completed", text } : null;
     }
 
     if (event.type === "item.completed" && item.type === "agent_message" && item.text) {

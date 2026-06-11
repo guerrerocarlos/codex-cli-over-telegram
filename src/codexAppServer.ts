@@ -1,5 +1,6 @@
 import { AppServerClient } from "./appServerClient.js";
 import { AsyncQueue } from "./asyncQueue.js";
+import { describeCommandOutput } from "./commandOutput.js";
 import type { CodexBackend, CodexRunEvent, CodexRunRequest, SandboxMode } from "./types.js";
 import { logger } from "./logger.js";
 
@@ -252,10 +253,8 @@ export class CodexAppServerBackend implements CodexBackend {
       return { type: "agent_message", text: item.text ?? "" };
     }
     if (item.type === "commandExecution") {
-      return {
-        type: "command_completed",
-        text: `${item.command ?? "Command"} completed${typeof item.exitCode === "number" ? ` with exit ${item.exitCode}` : ""}`,
-      };
+      const text = describeCommandOutput(item);
+      return text ? { type: "command_completed", text } : null;
     }
     if (item.type === "fileChange") {
       return { type: "file_changed", text: this.describeFileChange(item) };
