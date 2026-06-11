@@ -17,8 +17,8 @@ Each Telegram topic behaves like a separate Codex workspace console. Messages se
 Use documented programmatic surfaces instead of the interactive terminal UI:
 
 - Codex SDK: preferred long-term integration because it supports programmatic threads and repeated turns.
-- Codex app-server: preferred when we need rich client features such as streamed events, approvals, interrupts, and explicit thread lifecycle control.
-- `codex exec --json`: MVP fallback because it is stable, scriptable, and emits machine-readable JSONL events.
+- Codex app-server: default backend for richer client features such as streamed events, interrupts, active-turn steering, and explicit thread lifecycle control.
+- `codex exec --json`: fallback because it is stable, scriptable, and emits machine-readable JSONL events.
 
 Do not embed, scrape, or drive the Ratatui terminal UI. Telegram is the UI, and Codex should be controlled through SDK/app-server/exec.
 
@@ -61,8 +61,8 @@ Use TypeScript for the first implementation:
 - Telegram library: `grammy`.
 - Database: SQLite using `better-sqlite3` or `drizzle-orm` with SQLite.
 - Codex integration:
-  - Phase 1: `codex exec --json` child process adapter.
-  - Phase 2: `@openai/codex-sdk` or app-server adapter.
+  - Default: app-server stdio adapter.
+  - Fallback: `codex exec --json` child process adapter.
 - Process supervisor: systemd for a VPS or always-on Linux dev machine.
 - Optional HTTP server: Fastify for `/health` and metrics.
 
@@ -382,7 +382,26 @@ interface CodexBackend {
 }
 ```
 
-### Phase 1: `codex exec --json`
+### Default: Codex app-server
+
+The implementation uses `codex app-server --stdio` locally and drives the V2 protocol:
+
+- `initialize`
+- `thread/start`
+- `thread/resume`
+- `turn/start`
+- `turn/steer`
+- `turn/interrupt`
+
+This supports active-turn steering: if a user sends an ordinary Telegram message
+while a run is active in the same topic, the bot attempts `turn/steer` instead
+of queueing the message as the next run.
+
+Approval and elicitation server requests are currently declined automatically
+because the bot runs with `approvalPolicy = "never"` and has not implemented
+Telegram approve/deny buttons yet.
+
+### Fallback: `codex exec --json`
 
 Use `child_process.spawn`:
 
@@ -826,4 +845,3 @@ Both topics can be used from the same group. The bot keeps their Codex thread/se
 ## Recommendation
 
 Build the MVP with `codex exec --json` first. It proves the Telegram workflow, topic routing, repository locking, and operational model with the least moving parts. Keep the Codex backend behind an interface so SDK/app-server can replace `codex exec` once the bot UX is validated.
-

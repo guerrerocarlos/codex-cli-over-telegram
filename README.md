@@ -7,7 +7,8 @@ Control local Codex sessions from Telegram forum topics. Each Telegram topic can
 - Telegram forum topic routing with `chat_id + message_thread_id`
 - Allowlisted Telegram users and chats
 - Per-topic repo binding
-- Per-topic Codex session tracking through `codex exec --json`
+- Per-topic Codex session tracking through app-server or `codex exec --json`
+- Codex app-server backend for richer event streaming, resume, interrupt, and active-turn steering
 - Per-topic run queue
 - Repo write lock for `workspace-write` runs
 - `/health` endpoint with deployment metadata
@@ -37,6 +38,7 @@ ALLOWED_TELEGRAM_CHAT_IDS=-1001234567890
 ALLOWED_REPO_ROOTS=/home/gnu,/srv/dev
 DATABASE_PATH=./data/state.sqlite
 CODEX_BIN=codex
+CODEX_BACKEND=app-server
 DEFAULT_SANDBOX_MODE=read-only
 HEALTH_HOST=127.0.0.1
 HEALTH_PORT=8787
@@ -62,6 +64,14 @@ For production:
 npm run build
 npm start
 ```
+
+`CODEX_BACKEND=app-server` is the default and recommended backend. It runs
+`codex app-server --stdio` locally for each active Telegram run and uses
+`thread/start`, `thread/resume`, `turn/start`, `turn/steer`, and
+`turn/interrupt`.
+
+Use `CODEX_BACKEND=exec` to fall back to `codex exec --json`. The exec backend is
+stable and simple, but it cannot steer an active turn.
 
 ## Telegram Usage
 
@@ -116,6 +126,10 @@ Use git worktrees if two topics need to work on the same repo concurrently.
 ```
 
 Any ordinary text message in a bound topic becomes a Codex prompt.
+
+When the app-server backend is active, ordinary text sent while a run is already
+running in that topic is sent as a steering note to the active turn instead of
+being queued as the next run.
 
 ## Security Defaults
 
@@ -193,4 +207,3 @@ Use `scripts/deploy.sh` to build, write deployment metadata, restart the service
 npm test
 npm run build
 ```
-

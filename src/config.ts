@@ -3,6 +3,8 @@ import path from "node:path";
 import { mkdirSync } from "node:fs";
 import type { SandboxMode } from "./types.js";
 
+export type CodexBackendKind = "app-server" | "exec";
+
 export interface AppConfig {
   telegramBotToken: string;
   allowedTelegramUserIds: Set<number>;
@@ -10,6 +12,7 @@ export interface AppConfig {
   allowedRepoRoots: string[];
   databasePath: string;
   codexBin: string;
+  codexBackend: CodexBackendKind;
   defaultSandboxMode: SandboxMode;
   maxParallelRuns: number;
   maxTelegramMessageChars: number;
@@ -78,6 +81,14 @@ function parseSandboxMode(): SandboxMode {
   throw new Error("DEFAULT_SANDBOX_MODE must be read-only or workspace-write");
 }
 
+function parseCodexBackend(): CodexBackendKind {
+  const backend = optional("CODEX_BACKEND", "app-server");
+  if (backend === "app-server" || backend === "exec") {
+    return backend;
+  }
+  throw new Error("CODEX_BACKEND must be app-server or exec");
+}
+
 function parseInteger(name: string, fallback: number): number {
   const raw = optional(name, String(fallback));
   const value = Number(raw);
@@ -109,6 +120,7 @@ export function loadConfig(): AppConfig {
     allowedRepoRoots: parseRepoRoots(),
     databasePath,
     codexBin: optional("CODEX_BIN", "codex"),
+    codexBackend: parseCodexBackend(),
     defaultSandboxMode: parseSandboxMode(),
     maxParallelRuns: parseInteger("MAX_PARALLEL_RUNS", 4),
     maxTelegramMessageChars: parseInteger("MAX_TELEGRAM_MESSAGE_CHARS", 3500),

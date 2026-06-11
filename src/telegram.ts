@@ -281,6 +281,26 @@ export function createTelegramBot(
       return;
     }
 
+    const active = storage.getActiveRun(binding.id);
+    if (active && active.status === "running" && codex.steer) {
+      try {
+        const steered = await codex.steer(binding.id, text);
+        if (steered) {
+          storage.audit({
+            telegramUserId: ctx.from?.id ?? null,
+            chatId: binding.chatId,
+            messageThreadId: binding.messageThreadId,
+            eventType: "run_steered",
+            details: { runId: active.id },
+          });
+          await reply(ctx, `Sent steering note to run #${active.id}.`, config);
+          return;
+        }
+      } catch (error) {
+        await reply(ctx, `Could not steer active run; queued as a follow-up.\n${errorMessage(error)}`, config);
+      }
+    }
+
     const key = topicKey(binding.chatId, binding.messageThreadId);
     const queuedBehind = queue.depth(key);
     const run = storage.createRun(binding.id, ctx.message.message_id, text);

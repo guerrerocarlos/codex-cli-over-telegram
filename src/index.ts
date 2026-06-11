@@ -1,5 +1,6 @@
 import { loadConfig } from "./config.js";
 import { Storage } from "./storage.js";
+import { CodexAppServerBackend } from "./codexAppServer.js";
 import { CodexExecBackend } from "./codexExec.js";
 import { createTelegramBot } from "./telegram.js";
 import { startHealthServer } from "./health.js";
@@ -11,7 +12,10 @@ async function main(): Promise<void> {
   storage.resetInterruptedRuns();
 
   const healthServer = startHealthServer(config);
-  const codex = new CodexExecBackend(config.codexBin);
+  const codex =
+    config.codexBackend === "app-server"
+      ? new CodexAppServerBackend(config.codexBin)
+      : new CodexExecBackend(config.codexBin);
   const bot = createTelegramBot(config, storage, codex);
 
   const shutdown = async (signal: string) => {
@@ -29,6 +33,7 @@ async function main(): Promise<void> {
   logger.info("telegram bot starting", {
     botUsername: bot.botInfo.username,
     databasePath: config.databasePath,
+    codexBackend: config.codexBackend,
     defaultSandboxMode: config.defaultSandboxMode,
   });
   await bot.start({

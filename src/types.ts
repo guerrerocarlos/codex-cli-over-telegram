@@ -53,4 +53,5 @@ export type CodexRunEvent =
 export interface CodexBackend {
   run(request: CodexRunRequest): AsyncIterable<CodexRunEvent>;
   interrupt(bindingId: number): Promise<boolean>;
+  steer?(bindingId: number, prompt: string): Promise<boolean>;
 }
