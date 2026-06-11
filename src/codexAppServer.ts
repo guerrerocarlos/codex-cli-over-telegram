@@ -79,6 +79,7 @@ export class CodexAppServerBackend implements CodexBackend {
         threadId,
         input: [{ type: "text", text: request.prompt, text_elements: [] }],
         cwd: request.repoPath,
+        model: request.model,
         approvalPolicy: request.approvalPolicy,
       })) as RpcTurnResponse;
 
@@ -144,6 +145,7 @@ export class CodexAppServerBackend implements CodexBackend {
         return (await client.request("thread/resume", {
           threadId: request.codexThreadId,
           cwd: request.repoPath,
+          model: request.model,
           approvalPolicy: request.approvalPolicy,
           sandbox: request.sandboxMode,
         })) as RpcThreadResponse;
@@ -157,6 +159,7 @@ export class CodexAppServerBackend implements CodexBackend {
 
     return (await client.request("thread/start", {
       cwd: request.repoPath,
+      model: request.model,
       approvalPolicy: request.approvalPolicy,
       sandbox: request.sandboxMode,
     })) as RpcThreadResponse;

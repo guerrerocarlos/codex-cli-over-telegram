@@ -8,6 +8,7 @@ interface BindingRow {
   topic_name: string | null;
   repo_path: string;
   codex_thread_id: string | null;
+  model: string | null;
   sandbox_mode: SandboxMode;
   approval_policy: "never";
   status: string;
@@ -42,6 +43,7 @@ function mapBinding(row: BindingRow): TopicBinding {
     topicName: row.topic_name,
     repoPath: row.repo_path,
     codexThreadId: row.codex_thread_id,
+    model: row.model,
     sandboxMode: row.sandbox_mode,
     approvalPolicy: row.approval_policy,
     status: row.status,
@@ -90,6 +92,7 @@ export class Storage {
         topic_name TEXT,
         repo_path TEXT NOT NULL,
         codex_thread_id TEXT,
+        model TEXT,
         sandbox_mode TEXT NOT NULL DEFAULT 'read-only',
         approval_policy TEXT NOT NULL DEFAULT 'never',
         status TEXT NOT NULL DEFAULT 'idle',
@@ -130,6 +133,8 @@ export class Storage {
         details_json TEXT NOT NULL
       );
     `);
+
+    this.addColumnIfMissing("topic_bindings", "model", "TEXT");
   }
 
   resetInterruptedRuns(): void {
@@ -206,6 +211,12 @@ export class Storage {
     this.db
       .prepare("UPDATE topic_bindings SET sandbox_mode = ?, updated_at = ? WHERE id = ?")
       .run(sandboxMode, now(), bindingId);
+  }
+
+  updateBindingModel(bindingId: number, model: string | null): void {
+    this.db
+      .prepare("UPDATE topic_bindings SET model = ?, codex_thread_id = NULL, updated_at = ? WHERE id = ?")
+      .run(model, now(), bindingId);
   }
 
   updateBindingThread(bindingId: number, codexThreadId: string | null): void {
@@ -346,5 +357,12 @@ export class Storage {
         input.eventType,
         JSON.stringify(input.details),
       );
+  }
+
+  private addColumnIfMissing(tableName: string, columnName: string, definition: string): void {
+    const columns = this.db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>;
+    if (!columns.some((column) => column.name === columnName)) {
+      this.db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`);
+    }
   }
 }

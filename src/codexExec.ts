@@ -43,6 +43,10 @@ export class CodexExecBackend implements CodexBackend {
       `approval_policy="${request.approvalPolicy}"`,
     ];
 
+    if (request.model) {
+      args.push("--model", request.model);
+    }
+
     if (request.codexThreadId) {
       args.push("resume", request.codexThreadId, request.prompt);
     } else {

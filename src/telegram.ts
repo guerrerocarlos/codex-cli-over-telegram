@@ -6,6 +6,7 @@ import { RunQueue } from "./runQueue.js";
 import { resolveAllowedRepoPath } from "./pathPolicy.js";
 import { codeBlock, markdownV2Chunks, truncateText } from "./text.js";
 import { commitAll, currentBranch, diffSummary, fullDiff, isGitRepository, pushHead, statusShort } from "./git.js";
+import { listCodexModels, readCodexConfig, readCodexUsage, type CodexConfigSnapshot } from "./codexMetadata.js";
 import { logger } from "./logger.js";
 
 interface TopicRef {
@@ -128,6 +129,7 @@ export function createTelegramBot(
           codeBlock(binding.repoPath),
           "",
           `Branch:\n${codeBlock(branch)}`,
+          `Model:\n${codeBlock(await modelLabel(config, binding))}`,
           `Mode:\n${codeBlock(effectiveSandboxMode(config, binding.sandboxMode))}`,
           isRepo ? null : "Git commands are unavailable until this path is initialized as a repo.",
           renameResult,
@@ -156,6 +158,7 @@ export function createTelegramBot(
         `Repo: ${binding.repoPath}`,
         codeBlock(binding.repoPath),
         `Branch:\n${codeBlock(branch)}`,
+        `Model:\n${codeBlock(await modelLabel(config, binding))}`,
         `Mode:\n${codeBlock(effectiveSandboxMode(config, binding.sandboxMode))}`,
         `Codex session:\n${codeBlock(binding.codexThreadId ?? "(new)")}`,
         `Status:\n${codeBlock(binding.status)}`,
@@ -164,6 +167,97 @@ export function createTelegramBot(
       ].join("\n"),
       config,
     );
+  });
+
+  bot.command("models", async (ctx) => {
+    try {
+      const models = await listCodexModels(config.codexBin);
+      if (models.length === 0) {
+        await reply(ctx, "No Codex models were returned by app-server.", config);
+        return;
+      }
+      await reply(
+        ctx,
+        [
+          "Available models:",
+          codeBlock(
+            models
+              .map((model) => `${model.model}${model.isDefault ? " (default)" : ""} - ${model.displayName}`)
+              .join("\n"),
+          ),
+          "Set this topic with /model <model>.",
+        ].join("\n"),
+        config,
+      );
+    } catch (error) {
+      await reply(ctx, `Could not list models:\n${codeBlock(errorMessage(error))}`, config);
+    }
+  });
+
+  bot.command("model", async (ctx) => {
+    const binding = await requireBinding(ctx, config, storage);
+    if (!binding) {
+      return;
+    }
+
+    const requestedModel = ctx.match.trim();
+    if (!requestedModel) {
+      await reply(
+        ctx,
+        [
+          "Current model:",
+          codeBlock(await modelLabel(config, binding)),
+          "",
+          "Use /models to list available models.",
+          "Use /model <model> to set this topic.",
+          "Use /model default to return to Codex config default.",
+        ].join("\n"),
+        config,
+      );
+      return;
+    }
+
+    if (requestedModel === "default" || requestedModel === "clear" || requestedModel === "reset") {
+      storage.updateBindingModel(binding.id, null);
+      storage.audit({
+        telegramUserId: ctx.from?.id ?? null,
+        chatId: binding.chatId,
+        messageThreadId: binding.messageThreadId,
+        eventType: "model",
+        details: { model: null },
+      });
+      await reply(ctx, `Topic model reset to Codex config default:\n${codeBlock(await globalModelLabel(config, binding.repoPath))}`, config);
+      return;
+    }
+
+    try {
+      const models = await listCodexModels(config.codexBin);
+      const match = models.find((model) => model.model === requestedModel || model.id === requestedModel);
+      if (!match) {
+        await reply(
+          ctx,
+          [`Unknown model:`, codeBlock(requestedModel), "", "Use /models to list available models."].join("\n"),
+          config,
+        );
+        return;
+      }
+
+      storage.updateBindingModel(binding.id, match.model);
+      storage.audit({
+        telegramUserId: ctx.from?.id ?? null,
+        chatId: binding.chatId,
+        messageThreadId: binding.messageThreadId,
+        eventType: "model",
+        details: { model: match.model },
+      });
+      await reply(
+        ctx,
+        [`Topic model set to:`, codeBlock(match.model), "", "A fresh Codex session will start on the next run."].join("\n"),
+        config,
+      );
+    } catch (error) {
+      await reply(ctx, `Could not set model:\n${codeBlock(errorMessage(error))}`, config);
+    }
   });
 
   bot.command("mode", async (ctx) => {
@@ -227,13 +321,16 @@ export function createTelegramBot(
       return;
     }
     const active = storage.getActiveRun(binding.id);
+    const usage = await readStatusText(config);
     if (!active) {
       await reply(
         ctx,
         [
           `Idle.`,
           `Repo:\n${codeBlock(binding.repoPath)}`,
+          `Model:\n${codeBlock(await modelLabel(config, binding))}`,
           `Mode:\n${codeBlock(effectiveSandboxMode(config, binding.sandboxMode))}`,
+          usage,
         ].join("\n"),
         config,
       );
@@ -241,7 +338,12 @@ export function createTelegramBot(
     }
     await reply(
       ctx,
-      `Run #${active.id} is ${active.status}.\nPrompt:\n${codeBlock(truncateText(active.prompt, 700))}`,
+      [
+        `Run #${active.id} is ${active.status}.`,
+        `Model:\n${codeBlock(await modelLabel(config, binding))}`,
+        `Prompt:\n${codeBlock(truncateText(active.prompt, 700))}`,
+        usage,
+      ].join("\n"),
       config,
     );
   });
@@ -422,6 +524,7 @@ async function handlePrompt(
       [
         `Started run #${run.id}.`,
         `Repo:\n${codeBlock(binding.repoPath)}`,
+        `Model:\n${codeBlock(await modelLabel(config, binding))}`,
         `Mode:\n${codeBlock(effectiveSandboxMode(config, binding.sandboxMode))}`,
       ].join("\n"),
       config,
@@ -485,6 +588,7 @@ async function executeRun(
       codexThreadId: binding.codexThreadId,
       sandboxMode,
       approvalPolicy: binding.approvalPolicy,
+      model: binding.model,
     })) {
       if (event.type === "started" && event.threadId) {
         storage.updateBindingThread(binding.id, event.threadId);
@@ -750,6 +854,146 @@ function isWriteSandbox(sandboxMode: SandboxMode): boolean {
   return sandboxMode === "workspace-write" || sandboxMode === "danger-full-access";
 }
 
+async function modelLabel(config: AppConfig, binding: TopicBinding): Promise<string> {
+  if (binding.model) {
+    return `${binding.model} (topic)`;
+  }
+  return globalModelLabel(config, binding.repoPath);
+}
+
+async function globalModelLabel(config: AppConfig, cwd?: string): Promise<string> {
+  try {
+    const snapshot = await readCodexConfig(config.codexBin, cwd);
+    return formatConfigModel(snapshot);
+  } catch {
+    return "(Codex config default)";
+  }
+}
+
+function formatConfigModel(snapshot: CodexConfigSnapshot): string {
+  const parts = [snapshot.model ?? "(Codex config default)"];
+  if (snapshot.reasoningEffort) {
+    parts.push(`effort=${snapshot.reasoningEffort}`);
+  }
+  if (snapshot.serviceTier) {
+    parts.push(`tier=${snapshot.serviceTier}`);
+  }
+  return parts.join(" ");
+}
+
+async function readStatusText(config: AppConfig): Promise<string> {
+  try {
+    const usage = await readCodexUsage(config.codexBin);
+    return [
+      "Account:",
+      codeBlock([formatRateLimits(usage.rateLimits), formatTokenUsage(usage.usage)].filter(Boolean).join("\n")),
+    ].join("\n");
+  } catch (error) {
+    return `Account:\n${codeBlock(`unavailable: ${errorMessage(error)}`)}`;
+  }
+}
+
+function formatRateLimits(response: any): string {
+  const snapshot = response?.rateLimits ?? response?.rate_limits ?? response;
+  if (!snapshot) {
+    return "rate limits unavailable";
+  }
+
+  const lines = [
+    snapshot.planType || snapshot.plan_type ? `plan: ${snapshot.planType ?? snapshot.plan_type}` : null,
+    snapshot.limitName || snapshot.limit_name || snapshot.limitId || snapshot.limit_id
+      ? `limit: ${snapshot.limitName ?? snapshot.limit_name ?? snapshot.limitId ?? snapshot.limit_id}`
+      : null,
+    snapshot.rateLimitReachedType || snapshot.rate_limit_reached_type
+      ? `reached: ${snapshot.rateLimitReachedType ?? snapshot.rate_limit_reached_type}`
+      : null,
+    formatRateLimitWindow("primary", snapshot.primary),
+    formatRateLimitWindow("secondary", snapshot.secondary),
+    formatCredits(snapshot.credits),
+    formatSpendLimit(snapshot.individualLimit ?? snapshot.individual_limit),
+  ].filter(Boolean);
+
+  return lines.length > 0 ? lines.join("\n") : "rate limits unavailable";
+}
+
+function formatRateLimitWindow(label: string, window: any): string | null {
+  if (!window) {
+    return null;
+  }
+  const used = typeof window.usedPercent === "number" ? window.usedPercent : window.used_percent;
+  const duration = window.windowDurationMins ?? window.window_duration_mins;
+  const resetsAt = typeof window.resetsAt === "number" ? window.resetsAt : window.resets_at;
+  const parts = [`${label}: ${formatPercent(used)} used`];
+  if (duration) {
+    parts.push(`${duration}m window`);
+  }
+  if (resetsAt) {
+    parts.push(`resets ${formatUnixSeconds(resetsAt)}`);
+  }
+  return parts.join(", ");
+}
+
+function formatCredits(credits: any): string | null {
+  if (!credits) {
+    return null;
+  }
+  if (credits.unlimited) {
+    return "credits: unlimited";
+  }
+  if (credits.balance !== null && credits.balance !== undefined) {
+    return `credits: ${credits.balance}`;
+  }
+  return typeof credits.hasCredits === "boolean" ? `credits: ${credits.hasCredits ? "available" : "none"}` : null;
+}
+
+function formatSpendLimit(limit: any): string | null {
+  if (!limit) {
+    return null;
+  }
+  const lines = [`spend remaining: ${formatPercent(limit.remainingPercent ?? limit.remaining_percent)}`];
+  if (limit.resetsAt ?? limit.resets_at) {
+    lines.push(`resets ${formatUnixSeconds(limit.resetsAt ?? limit.resets_at)}`);
+  }
+  return lines.join(", ");
+}
+
+function formatTokenUsage(response: any): string {
+  const summary = response?.summary;
+  if (!summary) {
+    return "usage unavailable";
+  }
+  const lines = [
+    `lifetime tokens: ${formatNumber(summary.lifetimeTokens ?? summary.lifetime_tokens)}`,
+    summary.peakDailyTokens ?? summary.peak_daily_tokens
+      ? `peak daily tokens: ${formatNumber(summary.peakDailyTokens ?? summary.peak_daily_tokens)}`
+      : null,
+    summary.currentStreakDays ?? summary.current_streak_days
+      ? `current streak: ${formatNumber(summary.currentStreakDays ?? summary.current_streak_days)}d`
+      : null,
+  ].filter(Boolean);
+  return lines.join("\n");
+}
+
+function formatPercent(value: unknown): string {
+  return typeof value === "number" ? `${Math.round(value)}%` : "unknown";
+}
+
+function formatNumber(value: unknown): string {
+  if (value === null || value === undefined) {
+    return "unknown";
+  }
+  const numberValue = typeof value === "bigint" ? Number(value) : Number(value);
+  return Number.isFinite(numberValue) ? new Intl.NumberFormat("en-US").format(numberValue) : String(value);
+}
+
+function formatUnixSeconds(value: unknown): string {
+  const numberValue = Number(value);
+  if (!Number.isFinite(numberValue)) {
+    return "unknown";
+  }
+  return new Date(numberValue * 1000).toISOString();
+}
+
 function topicKey(chatId: number, messageThreadId: number): string {
   return `${chatId}:${messageThreadId}`;
 }
@@ -760,6 +1004,8 @@ function helpText(): string {
     "",
     "/bind <absolute_repo_path> - bind this topic to a git repo",
     "/where - show repo, branch, mode, and git status",
+    "/models - list available Codex models",
+    "/model - show or set this topic's Codex model",
     "/mode read - use read-only Codex sandbox",
     "/mode write - allow Codex workspace edits",
     "/topic - rename this Telegram topic to the bound folder name",

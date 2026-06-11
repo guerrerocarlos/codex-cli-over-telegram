@@ -60,6 +60,9 @@ Useful commands:
 ```text
 /bind ~/path/to/project
 /where
+/models
+/model
+/model gpt-5.5
 /mode read
 /mode write
 /status
