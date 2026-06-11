@@ -1,230 +1,123 @@
-# Codex over Telegram
+# Todex
 
-Control local Codex sessions from Telegram forum topics. Each Telegram topic can be bound to a different git repository or worktree, so one Telegram group can manage many repos at the same time.
+Run Codex from Telegram.
 
-## What Works
+Each Telegram topic can be bound to a different folder, so one Telegram group can control many repos or worktrees at the same time.
 
-- Telegram forum topic routing with `chat_id + message_thread_id`
-- Allowlisted Telegram users and chats
-- Per-topic path binding, including non-git directories
-- Per-topic Codex session tracking through app-server or `codex exec --json`
-- Codex app-server backend for richer event streaming, resume, interrupt, and active-turn steering
-- Forum topic rename on `/bind` when the bot has Manage Topics permission
-- Per-topic run queue
-- Repo write lock for `workspace-write` runs
-- `/health` endpoint with deployment metadata
-- Commands for binding, mode switching, status, stopping, diff, commit, and push
+## Quick Start With npx
 
-## Requirements
+Requirements:
 
 - Node.js 20+
-- A working `codex` CLI on the host
-- Codex authenticated on the host, for example with `codex login`
+- The `codex` CLI installed and logged in on this machine
 - A Telegram bot token from BotFather
-- A Telegram supergroup with forum topics enabled
 
-## Local Setup
+Create a `.env` file:
 
 ```bash
-npm install
-cp .env.example .env
+mkdir -p ~/.todex
+cd ~/.todex
+nano .env
 ```
 
-Edit `.env`:
+Paste this:
 
 ```text
 TELEGRAM_BOT_TOKEN=123456:telegram-token
-ALLOWED_TELEGRAM_USER_IDS=12345678
-ALLOWED_TELEGRAM_CHAT_IDS=-1001234567890
-ALLOWED_REPO_ROOTS=/home/gnu,/srv/dev
-DATABASE_PATH=./data/state.sqlite
-CODEX_BIN=codex
+ALLOWED_TELEGRAM_USER_IDS=
+ALLOWED_TELEGRAM_CHAT_IDS=
+ALLOWED_REPO_ROOTS=/home/you
+DATABASE_PATH=./state.sqlite
 CODEX_BACKEND=app-server
-DEFAULT_SANDBOX_MODE=read-only
+ALLOW_UNTHREADED_CHATS=true
 CODEX_ALWAYS_YOLO=false
-HEALTH_HOST=127.0.0.1
-HEALTH_PORT=8787
 ```
 
-You can leave `ALLOWED_TELEGRAM_USER_IDS` and
-`ALLOWED_TELEGRAM_CHAT_IDS` blank for the first run. In that bootstrap mode,
-the bot replies to any message with the exact user ID and chat ID values to add
-to `.env`.
-
-Find your Telegram IDs by sending a message to the bot and temporarily logging updates, or by using a known ID helper bot. Use only IDs you trust.
-
-## Run
+Start Todex:
 
 ```bash
+npx github:guerrerocarlos/codex-over-telegram
+```
+
+Send any message to the bot. If `ALLOWED_TELEGRAM_USER_IDS` or `ALLOWED_TELEGRAM_CHAT_IDS` is blank, Todex replies with the exact IDs to put in `.env`.
+
+Update `.env`, restart the command, then bind a folder:
+
+```text
+/bind ~/my-project
+```
+
+Now send a normal Telegram message:
+
+```text
+summarize this repo
+```
+
+## Daily Use
+
+Useful commands:
+
+```text
+/bind ~/path/to/project
+/where
+/mode read
+/mode write
+/status
+/stop
+/new
+/diff
+/commit Commit message
+/push
+/ask do something specific
+```
+
+Normal messages in a bound chat/topic are sent to Codex. Use `/ask` if Telegram privacy mode prevents the bot from seeing ordinary group messages.
+
+## YOLO Mode
+
+To make every Codex run use `danger-full-access` with approvals disabled:
+
+```text
+CODEX_ALWAYS_YOLO=true
+```
+
+Restart Todex after changing it.
+
+## Run From A Clone
+
+```bash
+git clone https://github.com/guerrerocarlos/codex-over-telegram.git
+cd codex-over-telegram
+npm install
+cp .env.example .env
 npm run dev
 ```
 
-In another terminal:
-
-```bash
-curl -fsS http://127.0.0.1:8787/health
-```
-
-For production:
+Production-style local run:
 
 ```bash
 npm run build
 npm start
 ```
 
-`CODEX_BACKEND=app-server` is the default and recommended backend. It runs
-`codex app-server --stdio` locally for each active Telegram run and uses
-`thread/start`, `thread/resume`, `turn/start`, `turn/steer`, and
-`turn/interrupt`.
+## Health Check
 
-Use `CODEX_BACKEND=exec` to fall back to `codex exec --json`. The exec backend is
-stable and simple, but it cannot steer an active turn.
-
-## Telegram Usage
-
-Create a forum topic in your Telegram group, then send:
-
-```text
-/bind /home/gnu/todex
-/mode read
-summarize this repository
-```
-
-When `/bind` runs inside a forum topic, the bot tries to rename that topic to
-the bound repository path. Telegram requires the bot to be an administrator with
-Manage Topics permission for this to work.
-
-For write-capable Codex runs:
-
-```text
-/mode write
-implement the smallest useful README improvement
-/diff
-/commit Improve README
-/push
-```
-
-Each topic has its own binding:
-
-```text
-Topic: codex-over-telegram
-  /bind /home/gnu/todex
-
-Topic: api-service
-  /bind /srv/dev/api-service
-
-Topic: mobile-app
-  /bind /srv/dev/mobile-app
-```
-
-Use git worktrees if two topics need to work on the same repo concurrently.
-
-## Commands
-
-```text
-/help
-/bind <absolute_path_or_~/path>
-/where
-/mode read
-/mode write
-/topic
-/new
-/status
-/stop
-/diff
-/commit <message>
-/push
-/unbind
-/ask <prompt>
-```
-
-Any ordinary text message in a bound topic becomes a Codex prompt. Bound paths
-do not have to be git repositories; Codex can inspect ordinary directories and
-can initialize git if you ask it to. Git helper commands such as `/diff`,
-`/commit`, and `/push` require the bound path to be a git repository.
-If the bot has Telegram privacy mode enabled, use `/ask <prompt>` because bots
-do not receive ordinary group messages in privacy mode.
-
-When the app-server backend is active, ordinary text sent while a run is already
-running in that topic is sent as a steering note to the active turn instead of
-being queued as the next run.
-
-## Security Defaults
-
-- The bot ignores non-allowlisted users and chats.
-- `/bind` only accepts absolute paths under `ALLOWED_REPO_ROOTS`.
-- Bound paths must be git repositories.
-- The default sandbox is `read-only`.
-- Write mode uses `workspace-write`.
-- Set `CODEX_ALWAYS_YOLO=true` only if every session should run with
-  `danger-full-access` and `approval_policy=never`, regardless of topic mode.
-- The Codex app-server is not exposed publicly.
-
-Telegram access to this bot is equivalent to remote control of the allowed repositories. Keep the bot token private and keep the allowlists tight.
-
-## Production With systemd
-
-Install files somewhere like:
+Todex exposes:
 
 ```bash
-sudo mkdir -p /opt/telegram-codex-wrapper
-sudo rsync -a --delete ./ /opt/telegram-codex-wrapper/
+curl -fsS http://127.0.0.1:8787/health
 ```
 
-Create a service user:
+## Security
 
-```bash
-sudo useradd --system --create-home --shell /usr/sbin/nologin codexbot
-```
+Telegram access to Todex is remote control of your allowed folders.
 
-Create `/etc/telegram-codex-wrapper/env`:
+Keep these tight:
 
 ```text
-TELEGRAM_BOT_TOKEN=123456:telegram-token
-ALLOWED_TELEGRAM_USER_IDS=12345678
-ALLOWED_TELEGRAM_CHAT_IDS=-1001234567890
-ALLOWED_REPO_ROOTS=/home/gnu,/srv/dev
-DATABASE_PATH=/var/lib/telegram-codex-wrapper/state.sqlite
-CODEX_BIN=codex
-DEFAULT_SANDBOX_MODE=read-only
-CODEX_ALWAYS_YOLO=false
-HEALTH_HOST=127.0.0.1
-HEALTH_PORT=8787
+ALLOWED_TELEGRAM_USER_IDS=
+ALLOWED_TELEGRAM_CHAT_IDS=
+ALLOWED_REPO_ROOTS=
 ```
 
-Then:
-
-```bash
-sudo install -d -m 0750 -o codexbot -g codexbot /var/lib/telegram-codex-wrapper
-sudo install -d -m 0750 -o root -g codexbot /etc/telegram-codex-wrapper
-sudo chown root:codexbot /etc/telegram-codex-wrapper/env
-sudo chmod 0640 /etc/telegram-codex-wrapper/env
-sudo cp deploy/systemd/telegram-codex-wrapper.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now telegram-codex-wrapper
-```
-
-The service user must be able to run `codex` and access the repositories you bind. If you use ChatGPT auth, authenticate Codex for the service account or use an environment where `codex exec` can reuse valid credentials.
-
-## Deployment Metadata
-
-`/health` returns:
-
-```json
-{
-  "ok": true,
-  "service": "telegram-codex-wrapper",
-  "branch": "main",
-  "commitHash": "full-commit-hash",
-  "deployedAt": "2026-06-11T13:45:00Z"
-}
-```
-
-Use `scripts/deploy.sh` to build, write deployment metadata, restart the service, and verify health.
-
-## Development Checks
-
-```bash
-npm test
-npm run build
-```
+Only enable `CODEX_ALWAYS_YOLO=true` on a machine and Telegram group you fully trust.

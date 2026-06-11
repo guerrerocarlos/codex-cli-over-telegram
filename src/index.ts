@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 import { loadConfig } from "./config.js";
 import { Storage } from "./storage.js";
 import { CodexAppServerBackend } from "./codexAppServer.js";

@@ -1,12 +1,16 @@
 {
-  "name": "codex-over-telegram",
+  "name": "todex",
   "version": "0.1.0",
   "description": "Control local Codex sessions from Telegram forum topics.",
   "type": "module",
   "main": "dist/index.js",
+  "bin": {
+    "todex": "dist/index.js"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsx src/index.ts",
+    "prepare": "npm run build",
     "start": "node dist/index.js",
     "test": "npm run typecheck",
     "typecheck": "tsc -p tsconfig.json --noEmit"
