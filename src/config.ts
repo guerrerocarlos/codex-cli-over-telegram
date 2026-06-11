@@ -18,6 +18,10 @@ export interface AppConfig {
   maxParallelRuns: number;
   maxTelegramMessageChars: number;
   telegramSendIntervalMs: number;
+  maxTelegramFileBytes: number;
+  openaiApiKey: string | null;
+  openaiTranscriptionModel: string;
+  ffmpegBin: string;
   healthHost: string;
   healthPort: number;
   allowUnthreadedChats: boolean;
@@ -128,6 +132,10 @@ export function loadConfig(): AppConfig {
     maxParallelRuns: parseInteger("MAX_PARALLEL_RUNS", 4),
     maxTelegramMessageChars: parseInteger("MAX_TELEGRAM_MESSAGE_CHARS", 3500),
     telegramSendIntervalMs: parseInteger("TELEGRAM_SEND_INTERVAL_MS", 1500),
+    maxTelegramFileBytes: parseInteger("MAX_TELEGRAM_FILE_BYTES", 20 * 1024 * 1024),
+    openaiApiKey: process.env.OPENAI_API_KEY?.trim() || null,
+    openaiTranscriptionModel: optional("OPENAI_TRANSCRIPTION_MODEL", "gpt-4o-transcribe"),
+    ffmpegBin: optional("FFMPEG_BIN", "ffmpeg"),
     healthHost: optional("HEALTH_HOST", "127.0.0.1"),
     healthPort: parseInteger("HEALTH_PORT", 8787),
     allowUnthreadedChats: parseBoolean("ALLOW_UNTHREADED_CHATS", false),

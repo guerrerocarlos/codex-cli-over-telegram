@@ -9,6 +9,13 @@ import { commitAll, currentBranch, diffSummary, fullDiff, isGitRepository, pushH
 import { listCodexModels, readCodexConfig, readCodexUsage, type CodexConfigSnapshot } from "./codexMetadata.js";
 import { logger } from "./logger.js";
 import { TelegramSendQueue } from "./telegramSendQueue.js";
+import {
+  saveTelegramFileToContext,
+  saveTranscriptForAudio,
+  transcribeStoredAudio,
+  type StoredContextFile,
+  type TelegramFileRef,
+} from "./telegramMedia.js";
 
 interface TopicRef {
   chatId: number;
@@ -17,6 +24,32 @@ interface TopicRef {
 
 interface SendOptions {
   notify?: boolean;
+}
+
+interface TelegramFileLike {
+  file_id: string;
+  file_unique_id: string;
+  file_size?: number;
+  file_name?: string;
+  mime_type?: string;
+}
+
+interface TelegramPhotoLike extends TelegramFileLike {
+  width?: number;
+  height?: number;
+}
+
+interface TelegramMessageWithFiles {
+  message_id?: number;
+  caption?: string;
+  photo?: TelegramPhotoLike[];
+  document?: TelegramFileLike;
+  audio?: TelegramFileLike;
+  video?: TelegramFileLike;
+  animation?: TelegramFileLike;
+  video_note?: TelegramFileLike;
+  voice?: TelegramFileLike;
+  sticker?: TelegramFileLike;
 }
 
 const sendQueues = new WeakMap<AppConfig, TelegramSendQueue>();
@@ -511,6 +544,10 @@ export function createTelegramBot(
     await handlePrompt(ctx, config, storage, codex, bot, queue, text);
   });
 
+  bot.on("message:file", async (ctx) => {
+    await handleFileMessage(ctx, config, storage, codex, bot, queue);
+  });
+
   bot.on("message:text", async (ctx) => {
     const text = ctx.message.text.trim();
     if (!text || text.startsWith("/")) {
@@ -535,6 +572,137 @@ function sendQueueFor(config: AppConfig): TelegramSendQueue {
   const queue = new TelegramSendQueue(config.telegramSendIntervalMs);
   sendQueues.set(config, queue);
   return queue;
+}
+
+async function handleFileMessage(
+  ctx: Context,
+  config: AppConfig,
+  storage: Storage,
+  codex: CodexBackend,
+  bot: Bot,
+  queue: RunQueue,
+): Promise<void> {
+  const binding = await requireBinding(ctx, config, storage);
+  if (!binding) {
+    return;
+  }
+
+  const instruction = captionInstruction(ctx);
+  if (instruction.unsupportedCommand) {
+    await reply(ctx, "Send bot commands as text messages. Use a plain caption as the instruction for uploaded files.", config);
+    return;
+  }
+
+  const fileRefs = extractTelegramFileRefs(ctx);
+  if (fileRefs.length === 0) {
+    return;
+  }
+
+  if (fileRefs.length === 1 && fileRefs[0]?.kind === "voice") {
+    await handleVoiceMessage(ctx, config, storage, codex, bot, queue, binding, fileRefs[0]);
+    return;
+  }
+
+  try {
+    const storedFiles: StoredContextFile[] = [];
+    for (const fileRef of fileRefs) {
+      const storedFile = await saveTelegramFileToContext(
+        bot,
+        config,
+        binding.repoPath,
+        fileRef,
+        ctx.message?.message_id ?? null,
+      );
+      storedFiles.push(storedFile);
+      storage.audit({
+        telegramUserId: ctx.from?.id ?? null,
+        chatId: binding.chatId,
+        messageThreadId: binding.messageThreadId,
+        eventType: "telegram_file_saved",
+        details: {
+          kind: storedFile.kind,
+          path: storedFile.relativePath,
+          size: storedFile.fileSize,
+          mimeType: storedFile.mimeType,
+        },
+      });
+    }
+
+    await reply(ctx, uploadedFilesSavedText(storedFiles), config);
+    await handlePrompt(
+      ctx,
+      config,
+      storage,
+      codex,
+      bot,
+      queue,
+      uploadedFilesPrompt(storedFiles, instruction.text),
+    );
+  } catch (error) {
+    await reply(ctx, `Could not save Telegram upload:\n${codeBlock(errorMessage(error))}`, config);
+  }
+}
+
+async function handleVoiceMessage(
+  ctx: Context,
+  config: AppConfig,
+  storage: Storage,
+  codex: CodexBackend,
+  bot: Bot,
+  queue: RunQueue,
+  binding: TopicBinding,
+  fileRef: TelegramFileRef,
+): Promise<void> {
+  try {
+    await reply(ctx, "Voice message received. Saving and transcribing it now.", config);
+    const storedAudio = await saveTelegramFileToContext(
+      bot,
+      config,
+      binding.repoPath,
+      fileRef,
+      ctx.message?.message_id ?? null,
+    );
+    const transcript = await transcribeStoredAudio(config, storedAudio);
+    if (!transcript) {
+      await reply(ctx, `Saved voice message to ${codeBlock(storedAudio.relativePath)} but transcription was empty.`, config);
+      return;
+    }
+
+    const storedTranscript = await saveTranscriptForAudio(binding.repoPath, storedAudio, transcript);
+    storage.audit({
+      telegramUserId: ctx.from?.id ?? null,
+      chatId: binding.chatId,
+      messageThreadId: binding.messageThreadId,
+      eventType: "telegram_voice_transcribed",
+      details: {
+        audioPath: storedAudio.relativePath,
+        transcriptPath: storedTranscript.relativePath,
+        audioSize: storedAudio.fileSize,
+        transcriptSize: storedTranscript.fileSize,
+      },
+    });
+
+    await reply(
+      ctx,
+      [
+        "Voice message transcribed.",
+        `Audio:\n${codeBlock(storedAudio.relativePath)}`,
+        `Transcript:\n${codeBlock(storedTranscript.relativePath)}`,
+      ].join("\n"),
+      config,
+    );
+    await handlePrompt(
+      ctx,
+      config,
+      storage,
+      codex,
+      bot,
+      queue,
+      voiceTranscriptPrompt(storedAudio, storedTranscript, transcript),
+    );
+  } catch (error) {
+    await reply(ctx, `Could not transcribe Telegram voice message:\n${codeBlock(errorMessage(error))}`, config);
+  }
 }
 
 async function handlePrompt(
@@ -932,6 +1100,127 @@ function effectiveSandboxMode(config: AppConfig, sandboxMode: SandboxMode): Sand
 
 function isWriteSandbox(sandboxMode: SandboxMode): boolean {
   return sandboxMode === "workspace-write" || sandboxMode === "danger-full-access";
+}
+
+function extractTelegramFileRefs(ctx: Context): TelegramFileRef[] {
+  const message = ctx.message as TelegramMessageWithFiles | undefined;
+  if (!message) {
+    return [];
+  }
+
+  const refs: TelegramFileRef[] = [];
+  if (message.photo?.length) {
+    const photo = [...message.photo].sort((left, right) => {
+      const leftPixels = (left.width ?? 0) * (left.height ?? 0);
+      const rightPixels = (right.width ?? 0) * (right.height ?? 0);
+      return rightPixels - leftPixels;
+    })[0];
+    if (photo) {
+      refs.push(fileRef("photo", photo, "telegram-photo.jpg"));
+    }
+  }
+
+  pushFileRef(refs, "document", message.document);
+  pushFileRef(refs, "audio", message.audio);
+  pushFileRef(refs, "video", message.video);
+  pushFileRef(refs, "animation", message.animation);
+  pushFileRef(refs, "video_note", message.video_note, "telegram-video-note.mp4");
+  pushFileRef(refs, "voice", message.voice, "telegram-voice.oga");
+  pushFileRef(refs, "sticker", message.sticker, "telegram-sticker.webp");
+
+  return refs;
+}
+
+function pushFileRef(
+  refs: TelegramFileRef[],
+  kind: string,
+  value: TelegramFileLike | undefined,
+  fallbackName: string | null = null,
+): void {
+  if (!value) {
+    return;
+  }
+  refs.push(fileRef(kind, value, fallbackName));
+}
+
+function fileRef(kind: string, value: TelegramFileLike, fallbackName: string | null): TelegramFileRef {
+  return {
+    kind,
+    fileId: value.file_id,
+    fileUniqueId: value.file_unique_id,
+    originalName: value.file_name ?? fallbackName,
+    mimeType: value.mime_type ?? null,
+    fileSize: value.file_size ?? null,
+  };
+}
+
+function captionInstruction(ctx: Context): { text: string; unsupportedCommand: boolean } {
+  const message = ctx.message as TelegramMessageWithFiles | undefined;
+  const caption = message?.caption?.trim() ?? "";
+  if (!caption) {
+    return { text: "", unsupportedCommand: false };
+  }
+
+  const askMatch = caption.match(/^\/ask(?:@\w+)?(?:\s+([\s\S]*))?$/);
+  if (askMatch) {
+    return { text: askMatch[1]?.trim() ?? "", unsupportedCommand: false };
+  }
+
+  return { text: caption, unsupportedCommand: caption.startsWith("/") };
+}
+
+function uploadedFilesSavedText(files: StoredContextFile[]): string {
+  return ["Saved Telegram upload to:", codeBlock(files.map((file) => file.relativePath).join("\n"))].join("\n");
+}
+
+function uploadedFilesPrompt(files: StoredContextFile[], instruction: string): string {
+  const lines = [
+    "Telegram uploaded file(s) were saved under this repository's .context folder.",
+    "",
+    "Saved file(s):",
+    files
+      .map((file) =>
+        [
+          `- ${file.relativePath}`,
+          `kind=${file.kind}`,
+          file.mimeType ? `mime=${file.mimeType}` : null,
+          `size=${file.fileSize} bytes`,
+          file.originalName ? `original=${file.originalName}` : null,
+        ]
+          .filter(Boolean)
+          .join(" "),
+      )
+      .join("\n"),
+  ];
+
+  if (instruction) {
+    lines.push("", "User caption/instructions:", instruction);
+  } else {
+    lines.push(
+      "",
+      "No explicit caption/instructions were included. Inspect the saved file(s) if useful, summarize what is available, and ask what the user wants done next if the next action is unclear.",
+    );
+  }
+
+  lines.push("", "Use these local paths as context. Copy or move files only if the user asked for that.");
+  return lines.join("\n");
+}
+
+function voiceTranscriptPrompt(
+  audioFile: StoredContextFile,
+  transcriptFile: StoredContextFile,
+  transcript: string,
+): string {
+  return [
+    "A Telegram voice message was transcribed.",
+    "",
+    `Audio file: ${audioFile.relativePath}`,
+    `Transcript file: ${transcriptFile.relativePath}`,
+    "",
+    "Treat this transcript as the user's message:",
+    "",
+    transcript,
+  ].join("\n");
 }
 
 async function modelLabel(config: AppConfig, binding: TopicBinding): Promise<string> {

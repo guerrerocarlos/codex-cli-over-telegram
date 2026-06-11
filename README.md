@@ -11,6 +11,7 @@ Requirements:
 - Node.js 20+
 - The `codex` CLI installed and logged in on this machine
 - A Telegram bot token from BotFather
+- `ffmpeg` and `OPENAI_API_KEY` for Telegram voice transcription
 
 Create a `.env` file:
 
@@ -32,6 +33,10 @@ CODEX_BACKEND=app-server
 ALLOW_UNTHREADED_CHATS=true
 CODEX_ALWAYS_YOLO=false
 TELEGRAM_SEND_INTERVAL_MS=1500
+MAX_TELEGRAM_FILE_BYTES=20971520
+OPENAI_API_KEY=
+OPENAI_TRANSCRIPTION_MODEL=gpt-4o-transcribe
+FFMPEG_BIN=ffmpeg
 ```
 
 Start Codex CLI over Telegram:
@@ -78,6 +83,10 @@ Useful commands:
 ```
 
 Normal messages in a bound chat/topic are sent to Codex. Use `/ask` if Telegram privacy mode prevents the bot from seeing ordinary group messages.
+
+Images, documents, audio, video, and other Telegram files are saved into the bound repository's `.context/` directory and then sent to Codex as local paths. If the upload has a caption, the caption is used as the instruction. A caption starting with `/ask` is also supported.
+
+Voice messages are saved into `.context/`, converted with `ffmpeg` when Telegram sends an OpenAI-unsupported audio container, transcribed with the OpenAI API, saved as a `.transcript.txt` file, and then sent to Codex as the user's prompt. Set `OPENAI_API_KEY` before using voice transcription.
 
 ## YOLO Mode
 
@@ -176,6 +185,10 @@ ALLOW_UNTHREADED_CHATS=true
 MAX_PARALLEL_RUNS=4
 MAX_TELEGRAM_MESSAGE_CHARS=3500
 TELEGRAM_SEND_INTERVAL_MS=1500
+MAX_TELEGRAM_FILE_BYTES=20971520
+OPENAI_API_KEY=sk-...
+OPENAI_TRANSCRIPTION_MODEL=gpt-4o-transcribe
+FFMPEG_BIN=ffmpeg
 HEALTH_HOST=127.0.0.1
 HEALTH_PORT=8787
 ```
