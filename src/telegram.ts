@@ -686,8 +686,9 @@ async function handleVoiceMessage(
       ctx,
       [
         "Voice message transcribed.",
-        `Audio:\n${codeBlock(storedAudio.relativePath)}`,
-        `Transcript:\n${codeBlock(storedTranscript.relativePath)}`,
+        "",
+        "Transcript:",
+        codeBlock(transcript.trim()),
       ].join("\n"),
       config,
     );
@@ -698,7 +699,7 @@ async function handleVoiceMessage(
       codex,
       bot,
       queue,
-      voiceTranscriptPrompt(storedAudio, storedTranscript, transcript),
+      voiceTranscriptPrompt(transcript),
     );
   } catch (error) {
     await reply(ctx, `Could not transcribe Telegram voice message:\n${codeBlock(errorMessage(error))}`, config);
@@ -1206,18 +1207,11 @@ function uploadedFilesPrompt(files: StoredContextFile[], instruction: string): s
   return lines.join("\n");
 }
 
-function voiceTranscriptPrompt(
-  audioFile: StoredContextFile,
-  transcriptFile: StoredContextFile,
-  transcript: string,
-): string {
+function voiceTranscriptPrompt(transcript: string): string {
   return [
     "A Telegram voice message was transcribed.",
     "",
-    `Audio file: ${audioFile.relativePath}`,
-    `Transcript file: ${transcriptFile.relativePath}`,
-    "",
-    "Treat this transcript as the user's message:",
+    "Transcript:",
     "",
     transcript,
   ].join("\n");
