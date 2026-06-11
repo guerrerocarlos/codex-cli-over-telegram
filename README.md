@@ -110,14 +110,13 @@ npm start
 
 Todex includes a systemd service named `codex-cli-over-telegram`.
 
-The service runs as user `codexbot`, uses `/home/codexbot` as `HOME`, and runs the app from `/opt/codex-cli-over-telegram`.
+The service runs as user `gnu`, uses `/home/gnu` as `HOME`, and runs the app from `/home/gnu/codex-cli-over-telegram`.
 
 Install the service:
 
 ```bash
-sudo useradd --system --create-home --shell /usr/sbin/nologin codexbot || true
-sudo install -d -m 0750 -o root -g codexbot /etc/codex-cli-over-telegram
-sudo install -d -m 0750 -o codexbot -g codexbot /var/lib/codex-cli-over-telegram
+sudo install -d -m 0750 -o root -g gnu /etc/codex-cli-over-telegram
+sudo install -d -m 0750 -o gnu -g gnu /home/gnu/.local/state/codex-cli-over-telegram
 sudo cp deploy/systemd/codex-cli-over-telegram.service /etc/systemd/system/codex-cli-over-telegram.service
 sudo systemctl daemon-reload
 ```
@@ -126,8 +125,14 @@ Put production env vars in:
 
 ```bash
 sudo nano /etc/codex-cli-over-telegram/env
-sudo chown root:codexbot /etc/codex-cli-over-telegram/env
+sudo chown root:gnu /etc/codex-cli-over-telegram/env
 sudo chmod 0640 /etc/codex-cli-over-telegram/env
+```
+
+For the systemd service, set:
+
+```text
+DATABASE_PATH=/home/gnu/.local/state/codex-cli-over-telegram/state.sqlite
 ```
 
 Deploy and enable startup:

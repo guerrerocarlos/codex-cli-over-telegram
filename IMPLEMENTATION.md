@@ -621,7 +621,7 @@ TELEGRAM_BOT_TOKEN=
 ALLOWED_TELEGRAM_USER_IDS=
 ALLOWED_TELEGRAM_CHAT_IDS=
 ALLOWED_REPO_ROOTS=/home/gnu,/srv/dev
-DATABASE_PATH=/var/lib/codex-cli-over-telegram/state.sqlite
+DATABASE_PATH=/home/gnu/.local/state/codex-cli-over-telegram/state.sqlite
 CODEX_BIN=codex
 DEFAULT_SANDBOX_MODE=read-only
 CODEX_ALWAYS_YOLO=false
@@ -642,7 +642,7 @@ Store secrets in a systemd environment file:
 Permissions:
 
 ```bash
-sudo chown root:codexbot /etc/codex-cli-over-telegram/env
+sudo chown root:gnu /etc/codex-cli-over-telegram/env
 sudo chmod 0640 /etc/codex-cli-over-telegram/env
 ```
 
@@ -658,25 +658,25 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=codexbot
-Group=codexbot
-WorkingDirectory=/opt/codex-cli-over-telegram
-Environment=HOME=/home/codexbot
+User=gnu
+Group=gnu
+WorkingDirectory=/home/gnu/codex-cli-over-telegram
+Environment=HOME=/home/gnu
 EnvironmentFile=/etc/codex-cli-over-telegram/env
 EnvironmentFile=-/etc/codex-cli-over-telegram/deploy.env
-ExecStart=/usr/bin/node /opt/codex-cli-over-telegram/dist/index.js
+ExecStart=/usr/bin/node /home/gnu/codex-cli-over-telegram/dist/index.js
 Restart=always
 RestartSec=5
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
-ReadWritePaths=/var/lib/codex-cli-over-telegram /home/codexbot /home/gnu /srv/dev
+ReadWritePaths=/home/gnu /srv/dev
 
 [Install]
 WantedBy=multi-user.target
 ```
 
-The service runs as `codexbot` with `HOME=/home/codexbot`, so Codex reads its auth and config from `/home/codexbot/.codex`. Adjust `ReadWritePaths` to the exact repository roots the bot is allowed to manage.
+The service runs as `gnu` with `HOME=/home/gnu`, so Codex reads its auth and config from `/home/gnu/.codex`. Adjust `ReadWritePaths` to the exact repository roots the bot is allowed to manage.
 
 ## Deployment Script
 
@@ -703,7 +703,7 @@ branch="$(git rev-parse --abbrev-ref HEAD)"
 commit_hash="$(git rev-parse HEAD)"
 deployed_at="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 
-sudo install -d -m 0750 -o root -g codexbot /etc/codex-cli-over-telegram
+sudo install -d -m 0750 -o root -g gnu /etc/codex-cli-over-telegram
 sudo tee /etc/codex-cli-over-telegram/deploy.env >/dev/null <<EOF
 DEPLOY_BRANCH=$branch
 DEPLOY_COMMIT_HASH=$commit_hash
