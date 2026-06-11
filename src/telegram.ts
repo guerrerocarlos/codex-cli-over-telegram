@@ -100,11 +100,12 @@ export function createTelegramBot(
         await reply(ctx, `Not a git repository: ${repoPath}`, config);
         return;
       }
+      const topicName = topicNameForPath(repoPath);
 
       const binding = storage.upsertBinding({
         chatId: topic.chatId,
         messageThreadId: topic.messageThreadId,
-        topicName: null,
+        topicName,
         repoPath,
         createdByUserId: ctx.from?.id ?? 0,
         sandboxMode: config.defaultSandboxMode,
@@ -118,9 +119,19 @@ export function createTelegramBot(
       });
 
       const branch = await currentBranch(repoPath);
+      const renameResult = await renameForumTopicForBinding(ctx, binding, topicName);
       await reply(
         ctx,
-        `Bound this topic to:\n${binding.repoPath}\n\nBranch: ${branch}\nMode: ${binding.sandboxMode}`,
+        [
+          `Bound this topic to:`,
+          binding.repoPath,
+          "",
+          `Branch: ${branch}`,
+          `Mode: ${binding.sandboxMode}`,
+          renameResult,
+        ]
+          .filter(Boolean)
+          .join("\n"),
         config,
       );
     } catch (error) {
@@ -172,6 +183,16 @@ export function createTelegramBot(
       details: { mode },
     });
     await reply(ctx, `Mode set to ${mode}.`, config);
+  });
+
+  bot.command("topic", async (ctx) => {
+    const binding = await requireBinding(ctx, config, storage);
+    if (!binding) {
+      return;
+    }
+    const topicName = topicNameForPath(binding.repoPath);
+    const renameResult = await renameForumTopicForBinding(ctx, binding, topicName);
+    await reply(ctx, renameResult || `No forum topic to rename for ${binding.repoPath}.`, config);
   });
 
   bot.command("new", async (ctx) => {
@@ -636,6 +657,7 @@ function helpText(): string {
     "/where - show repo, branch, mode, and git status",
     "/mode read - use read-only Codex sandbox",
     "/mode write - allow Codex workspace edits",
+    "/topic - rename this Telegram topic to the bound repo path",
     "/new - start a fresh Codex session",
     "/status - show active queued/running task",
     "/stop - stop the active Codex process",
@@ -655,4 +677,50 @@ function errorMessage(error: unknown): string {
     return [error.message, maybe.stderr, maybe.stdout].filter(Boolean).join("\n");
   }
   return String(error);
+}
+
+function topicNameForPath(repoPath: string): string {
+  if (repoPath.length <= 128) {
+    return repoPath;
+  }
+
+  const parts = repoPath.split("/").filter(Boolean);
+  let suffix = parts.pop() ?? repoPath.slice(-120);
+
+  while (parts.length > 0 && suffix.length < 120) {
+    const next = parts.pop();
+    if (!next) {
+      break;
+    }
+    const candidate = `${next}/${suffix}`;
+    if (candidate.length > 120) {
+      break;
+    }
+    suffix = candidate;
+  }
+
+  return `.../${suffix}`.slice(0, 128);
+}
+
+async function renameForumTopicForBinding(
+  ctx: Context,
+  binding: TopicBinding,
+  topicName: string,
+): Promise<string | null> {
+  if (binding.messageThreadId <= 0) {
+    return null;
+  }
+
+  try {
+    await ctx.api.editForumTopic(binding.chatId, binding.messageThreadId, { name: topicName });
+    return `Topic renamed to: ${topicName}`;
+  } catch (error) {
+    logger.warn("failed to rename telegram topic", {
+      chatId: binding.chatId,
+      messageThreadId: binding.messageThreadId,
+      topicName,
+      error: errorMessage(error),
+    });
+    return `Topic rename failed: ${errorMessage(error)}`;
+  }
 }

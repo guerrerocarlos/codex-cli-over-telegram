@@ -9,6 +9,7 @@ Control local Codex sessions from Telegram forum topics. Each Telegram topic can
 - Per-topic repo binding
 - Per-topic Codex session tracking through app-server or `codex exec --json`
 - Codex app-server backend for richer event streaming, resume, interrupt, and active-turn steering
+- Forum topic rename on `/bind` when the bot has Manage Topics permission
 - Per-topic run queue
 - Repo write lock for `workspace-write` runs
 - `/health` endpoint with deployment metadata
@@ -88,6 +89,10 @@ Create a forum topic in your Telegram group, then send:
 summarize this repository
 ```
 
+When `/bind` runs inside a forum topic, the bot tries to rename that topic to
+the bound repository path. Telegram requires the bot to be an administrator with
+Manage Topics permission for this to work.
+
 For write-capable Codex runs:
 
 ```text
@@ -121,6 +126,7 @@ Use git worktrees if two topics need to work on the same repo concurrently.
 /where
 /mode read
 /mode write
+/topic
 /new
 /status
 /stop
