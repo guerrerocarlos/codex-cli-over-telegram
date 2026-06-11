@@ -41,6 +41,7 @@ DATABASE_PATH=./data/state.sqlite
 CODEX_BIN=codex
 CODEX_BACKEND=app-server
 DEFAULT_SANDBOX_MODE=read-only
+CODEX_ALWAYS_YOLO=false
 HEALTH_HOST=127.0.0.1
 HEALTH_PORT=8787
 ```
@@ -154,7 +155,9 @@ being queued as the next run.
 - `/bind` only accepts absolute paths under `ALLOWED_REPO_ROOTS`.
 - Bound paths must be git repositories.
 - The default sandbox is `read-only`.
-- Write mode uses `workspace-write`, never `danger-full-access`.
+- Write mode uses `workspace-write`.
+- Set `CODEX_ALWAYS_YOLO=true` only if every session should run with
+  `danger-full-access` and `approval_policy=never`, regardless of topic mode.
 - The Codex app-server is not exposed publicly.
 
 Telegram access to this bot is equivalent to remote control of the allowed repositories. Keep the bot token private and keep the allowlists tight.
@@ -184,6 +187,7 @@ ALLOWED_REPO_ROOTS=/home/gnu,/srv/dev
 DATABASE_PATH=/var/lib/telegram-codex-wrapper/state.sqlite
 CODEX_BIN=codex
 DEFAULT_SANDBOX_MODE=read-only
+CODEX_ALWAYS_YOLO=false
 HEALTH_HOST=127.0.0.1
 HEALTH_PORT=8787
 ```

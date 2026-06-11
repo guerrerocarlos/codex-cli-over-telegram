@@ -109,7 +109,7 @@ export function createTelegramBot(
         topicName,
         repoPath,
         createdByUserId: ctx.from?.id ?? 0,
-        sandboxMode: config.defaultSandboxMode,
+        sandboxMode: effectiveSandboxMode(config, config.defaultSandboxMode),
       });
       storage.audit({
         telegramUserId: ctx.from?.id ?? null,
@@ -128,7 +128,7 @@ export function createTelegramBot(
           codeBlock(binding.repoPath),
           "",
           `Branch:\n${codeBlock(branch)}`,
-          `Mode:\n${codeBlock(binding.sandboxMode)}`,
+          `Mode:\n${codeBlock(effectiveSandboxMode(config, binding.sandboxMode))}`,
           isRepo ? null : "Git commands are unavailable until this path is initialized as a repo.",
           renameResult,
         ]
@@ -156,7 +156,7 @@ export function createTelegramBot(
         `Repo: ${binding.repoPath}`,
         codeBlock(binding.repoPath),
         `Branch:\n${codeBlock(branch)}`,
-        `Mode:\n${codeBlock(binding.sandboxMode)}`,
+        `Mode:\n${codeBlock(effectiveSandboxMode(config, binding.sandboxMode))}`,
         `Codex session:\n${codeBlock(binding.codexThreadId ?? "(new)")}`,
         `Status:\n${codeBlock(binding.status)}`,
         "",
@@ -186,7 +186,13 @@ export function createTelegramBot(
       eventType: "mode",
       details: { mode },
     });
-    await reply(ctx, `Mode set to ${mode}.`, config);
+    await reply(
+      ctx,
+      config.alwaysYoloMode
+        ? `Mode saved as ${mode}, but CODEX_ALWAYS_YOLO is enabled. Runs will use danger-full-access.`
+        : `Mode set to ${mode}.`,
+      config,
+    );
   });
 
   bot.command("topic", async (ctx) => {
@@ -224,7 +230,11 @@ export function createTelegramBot(
     if (!active) {
       await reply(
         ctx,
-        [`Idle.`, `Repo:\n${codeBlock(binding.repoPath)}`, `Mode:\n${codeBlock(binding.sandboxMode)}`].join("\n"),
+        [
+          `Idle.`,
+          `Repo:\n${codeBlock(binding.repoPath)}`,
+          `Mode:\n${codeBlock(effectiveSandboxMode(config, binding.sandboxMode))}`,
+        ].join("\n"),
         config,
       );
       return;
@@ -409,9 +419,11 @@ async function handlePrompt(
   } else {
     await reply(
       ctx,
-      [`Started run #${run.id}.`, `Repo:\n${codeBlock(binding.repoPath)}`, `Mode:\n${codeBlock(binding.sandboxMode)}`].join(
-        "\n",
-      ),
+      [
+        `Started run #${run.id}.`,
+        `Repo:\n${codeBlock(binding.repoPath)}`,
+        `Mode:\n${codeBlock(effectiveSandboxMode(config, binding.sandboxMode))}`,
+      ].join("\n"),
       config,
     );
   }
@@ -440,7 +452,9 @@ async function executeRun(
   let lastProgressAt = 0;
 
   try {
-    if (binding.sandboxMode === "workspace-write") {
+    const sandboxMode = effectiveSandboxMode(config, binding.sandboxMode);
+
+    if (isWriteSandbox(sandboxMode)) {
       lockAcquired = storage.acquireWriteLock(binding.repoPath, run.id);
       if (!lockAcquired) {
         const lock = storage.getRepoLock(binding.repoPath);
@@ -460,7 +474,7 @@ async function executeRun(
       chatId: binding.chatId,
       messageThreadId: binding.messageThreadId,
       eventType: "run_started",
-      details: { runId: run.id, repoPath: binding.repoPath, sandboxMode: binding.sandboxMode },
+      details: { runId: run.id, repoPath: binding.repoPath, sandboxMode },
     });
 
     for await (const event of codex.run({
@@ -468,7 +482,7 @@ async function executeRun(
       repoPath: binding.repoPath,
       prompt,
       codexThreadId: binding.codexThreadId,
-      sandboxMode: binding.sandboxMode,
+      sandboxMode,
       approvalPolicy: binding.approvalPolicy,
     })) {
       if (event.type === "started" && event.threadId) {
@@ -713,6 +727,14 @@ function parseMode(input: string): SandboxMode | null {
     return "workspace-write";
   }
   return null;
+}
+
+function effectiveSandboxMode(config: AppConfig, sandboxMode: SandboxMode): SandboxMode {
+  return config.alwaysYoloMode ? "danger-full-access" : sandboxMode;
+}
+
+function isWriteSandbox(sandboxMode: SandboxMode): boolean {
+  return sandboxMode === "workspace-write" || sandboxMode === "danger-full-access";
 }
 
 function topicKey(chatId: number, messageThreadId: number): string {

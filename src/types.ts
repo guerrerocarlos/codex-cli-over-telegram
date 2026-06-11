@@ -1,4 +1,4 @@
-export type SandboxMode = "read-only" | "workspace-write";
+export type SandboxMode = "read-only" | "workspace-write" | "danger-full-access";
 
 export type RunStatus = "queued" | "running" | "completed" | "failed" | "stopped";
 

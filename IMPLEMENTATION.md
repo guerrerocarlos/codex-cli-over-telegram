@@ -233,7 +233,8 @@ Set sandbox mode for future prompts in this topic:
 - `read`: `read-only`
 - `write`: `workspace-write`
 
-Do not expose `danger-full-access` as a normal command.
+`danger-full-access` is only enabled by operator configuration:
+`CODEX_ALWAYS_YOLO=true` forces every run into YOLO mode with approvals disabled.
 
 ```text
 /status
@@ -487,7 +488,8 @@ Required protections:
 - Refuse symlink escapes outside allowed roots.
 - Default to `read-only`.
 - Require `/mode write` before edits.
-- Do not expose `danger-full-access` in normal commands.
+- Expose `danger-full-access` only through the explicit operator env flag
+  `CODEX_ALWAYS_YOLO=true`.
 - Never print secrets, token files, or full environment variables.
 - Do not pass OpenAI or Codex credentials as broad process-wide env vars.
 - Store Telegram bot token in an environment file readable only by the service user.
@@ -622,6 +624,7 @@ ALLOWED_REPO_ROOTS=/home/gnu,/srv/dev
 DATABASE_PATH=/var/lib/telegram-codex-wrapper/state.sqlite
 CODEX_BIN=codex
 DEFAULT_SANDBOX_MODE=read-only
+CODEX_ALWAYS_YOLO=false
 MAX_PARALLEL_RUNS=4
 MAX_TELEGRAM_MESSAGE_CHARS=3500
 HEALTH_PORT=8787

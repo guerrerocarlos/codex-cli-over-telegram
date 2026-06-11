@@ -35,6 +35,7 @@ async function main(): Promise<void> {
     databasePath: config.databasePath,
     codexBackend: config.codexBackend,
     defaultSandboxMode: config.defaultSandboxMode,
+    alwaysYoloMode: config.alwaysYoloMode,
   });
   await bot.start({
     drop_pending_updates: true,

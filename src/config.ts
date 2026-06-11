@@ -14,6 +14,7 @@ export interface AppConfig {
   codexBin: string;
   codexBackend: CodexBackendKind;
   defaultSandboxMode: SandboxMode;
+  alwaysYoloMode: boolean;
   maxParallelRuns: number;
   maxTelegramMessageChars: number;
   healthHost: string;
@@ -75,10 +76,10 @@ function parseRepoRoots(): string[] {
 
 function parseSandboxMode(): SandboxMode {
   const mode = optional("DEFAULT_SANDBOX_MODE", "read-only");
-  if (mode === "read-only" || mode === "workspace-write") {
+  if (mode === "read-only" || mode === "workspace-write" || mode === "danger-full-access") {
     return mode;
   }
-  throw new Error("DEFAULT_SANDBOX_MODE must be read-only or workspace-write");
+  throw new Error("DEFAULT_SANDBOX_MODE must be read-only, workspace-write, or danger-full-access");
 }
 
 function parseCodexBackend(): CodexBackendKind {
@@ -122,6 +123,7 @@ export function loadConfig(): AppConfig {
     codexBin: optional("CODEX_BIN", "codex"),
     codexBackend: parseCodexBackend(),
     defaultSandboxMode: parseSandboxMode(),
+    alwaysYoloMode: parseBoolean("CODEX_ALWAYS_YOLO", false),
     maxParallelRuns: parseInteger("MAX_PARALLEL_RUNS", 4),
     maxTelegramMessageChars: parseInteger("MAX_TELEGRAM_MESSAGE_CHARS", 3500),
     healthHost: optional("HEALTH_HOST", "127.0.0.1"),
