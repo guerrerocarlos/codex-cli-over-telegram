@@ -29,6 +29,18 @@ export function createTelegramBot(
       return;
     }
 
+    if (config.allowedTelegramUserIds.size === 0 || config.allowedTelegramChatIds.size === 0) {
+      storage.audit({
+        telegramUserId: fromId,
+        chatId,
+        messageThreadId: ctx.message?.message_thread_id ?? null,
+        eventType: "bootstrap_setup_message",
+        details: { username: ctx.from?.username ?? null },
+      });
+      await reply(ctx, bootstrapSetupText(ctx, config), config);
+      return;
+    }
+
     if (!config.allowedTelegramUserIds.has(fromId) || !config.allowedTelegramChatIds.has(chatId)) {
       storage.audit({
         telegramUserId: fromId,
@@ -488,6 +500,32 @@ async function ensureNoActiveRun(
     config,
   );
   return false;
+}
+
+function bootstrapSetupText(ctx: Context, config: AppConfig): string {
+  const userId = ctx.from?.id;
+  const chatId = ctx.chat?.id;
+  const messageThreadId = ctx.message?.message_thread_id;
+  const missing = [
+    config.allowedTelegramUserIds.size === 0 ? "ALLOWED_TELEGRAM_USER_IDS" : null,
+    config.allowedTelegramChatIds.size === 0 ? "ALLOWED_TELEGRAM_CHAT_IDS" : null,
+  ].filter(Boolean);
+
+  return [
+    "Bot setup is incomplete.",
+    "",
+    `Missing: ${missing.join(", ")}`,
+    "",
+    "Add these values to .env, then restart the bot:",
+    "",
+    `ALLOWED_TELEGRAM_USER_IDS=${userId ?? ""}`,
+    `ALLOWED_TELEGRAM_CHAT_IDS=${chatId ?? ""}`,
+    typeof messageThreadId === "number" ? `# Current topic message_thread_id=${messageThreadId}` : null,
+    "",
+    "For forum groups, the chat ID authorizes the whole group. Topic IDs are discovered per message and do not go in ALLOWED_TELEGRAM_CHAT_IDS.",
+  ]
+    .filter((line): line is string => line !== null)
+    .join("\n");
 }
 
 async function reply(ctx: Context, text: string, config: AppConfig): Promise<void> {

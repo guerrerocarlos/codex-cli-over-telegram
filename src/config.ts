@@ -38,7 +38,11 @@ function optional(name: string, fallback: string): string {
 }
 
 function parseNumberList(name: string): Set<number> {
-  const raw = required(name);
+  const raw = process.env[name]?.trim();
+  if (!raw) {
+    return new Set();
+  }
+
   const values = raw
     .split(",")
     .map((item) => item.trim())
@@ -50,10 +54,6 @@ function parseNumberList(name: string): Set<number> {
       }
       return value;
     });
-
-  if (values.length === 0) {
-    throw new Error(`${name} must contain at least one ID`);
-  }
 
   return new Set(values);
 }

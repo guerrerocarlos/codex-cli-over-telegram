@@ -44,6 +44,11 @@ HEALTH_HOST=127.0.0.1
 HEALTH_PORT=8787
 ```
 
+You can leave `ALLOWED_TELEGRAM_USER_IDS` and
+`ALLOWED_TELEGRAM_CHAT_IDS` blank for the first run. In that bootstrap mode,
+the bot replies to any message with the exact user ID and chat ID values to add
+to `.env`.
+
 Find your Telegram IDs by sending a message to the bot and temporarily logging updates, or by using a known ID helper bot. Use only IDs you trust.
 
 ## Run
