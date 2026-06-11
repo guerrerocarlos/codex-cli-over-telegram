@@ -497,7 +497,7 @@ async function executeRun(
       }
 
       if (event.type === "command_started") {
-        await sendText(bot, config, binding, `Running:\n${codeBlock(truncateText(event.text, 900), "bash")}`);
+        await sendText(bot, config, binding, codeBlock(truncateText(event.text, 900), "bash"));
         continue;
       }
 
@@ -537,7 +537,7 @@ async function executeRun(
       bot,
       config,
       binding,
-      `Completed run #${run.id}.\n\n${codeBlock(finalMessage || "Codex completed without a final message.")}`,
+      finalMessage || "Codex completed without a final message.",
       { notify: true },
     );
   } catch (error) {
