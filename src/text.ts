@@ -47,6 +47,9 @@ export function markdownV2Chunks(text: string, maxChars: number): string[] {
   for (const segment of parseMarkdownSegments(text)) {
     if (segment.type === "text") {
       chunks.push(...chunkEscapedText(escapeMarkdownV2Text(segment.text), maxChars));
+    } else if (segment.type === "inlineCode") {
+      const rendered = renderInlineCode(segment.body);
+      chunks.push(...(rendered.length <= maxChars ? [rendered] : chunkCodeBlock(segment.body, "", maxChars)));
     } else {
       chunks.push(...chunkCodeBlock(segment.body, segment.language, maxChars));
     }
@@ -61,6 +64,9 @@ function renderMarkdownV2(text: string): string {
       if (segment.type === "text") {
         return escapeMarkdownV2Text(segment.text);
       }
+      if (segment.type === "inlineCode") {
+        return renderInlineCode(segment.body);
+      }
       return renderCodeBlock(segment.body, segment.language);
     })
     .join("");
@@ -68,6 +74,7 @@ function renderMarkdownV2(text: string): string {
 
 type MarkdownSegment =
   | { type: "text"; text: string }
+  | { type: "inlineCode"; body: string }
   | { type: "code"; language: string; body: string };
 
 function parseMarkdownSegments(text: string): MarkdownSegment[] {
@@ -114,10 +121,28 @@ function appendTextSegments(segments: MarkdownSegment[], text: string): void {
 
   while ((match = fencePattern.exec(text)) !== null) {
     if (match.index > cursor) {
-      segments.push({ type: "text", text: text.slice(cursor, match.index) });
+      appendInlineTextSegments(segments, text.slice(cursor, match.index));
     }
     segments.push({ type: "code", language: match[1] ?? "", body: match[2] ?? "" });
     cursor = fencePattern.lastIndex;
+  }
+
+  if (cursor < text.length) {
+    appendInlineTextSegments(segments, text.slice(cursor));
+  }
+}
+
+function appendInlineTextSegments(segments: MarkdownSegment[], text: string): void {
+  const inlineCodePattern = /`([^`\n]+)`/g;
+  let cursor = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = inlineCodePattern.exec(text)) !== null) {
+    if (match.index > cursor) {
+      segments.push({ type: "text", text: text.slice(cursor, match.index) });
+    }
+    segments.push({ type: "inlineCode", body: match[1] ?? "" });
+    cursor = inlineCodePattern.lastIndex;
   }
 
   if (cursor < text.length) {
@@ -135,6 +160,10 @@ function escapeMarkdownV2Code(text: string): string {
 
 function renderCodeBlock(body: string, language: string): string {
   return `\`\`\`${sanitizeCodeLanguage(language)}\n${escapeMarkdownV2Code(body)}\n\`\`\``;
+}
+
+function renderInlineCode(body: string): string {
+  return `\`${escapeMarkdownV2Code(body)}\``;
 }
 
 function sanitizeCodeLanguage(language: string): string {
