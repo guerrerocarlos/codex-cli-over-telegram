@@ -4,7 +4,7 @@ import type { CodexBackend, CodexRunEvent, RunRecord, SandboxMode, TopicBinding 
 import { Storage } from "./storage.js";
 import { RunQueue } from "./runQueue.js";
 import { resolveAllowedRepoPath } from "./pathPolicy.js";
-import { chunkText, codeBlock, truncateText } from "./text.js";
+import { codeBlock, markdownV2Chunks, truncateText } from "./text.js";
 import { commitAll, currentBranch, diffSummary, fullDiff, isGitRepository, pushHead, statusShort } from "./git.js";
 import { logger } from "./logger.js";
 
@@ -646,15 +646,17 @@ async function reply(ctx: Context, text: string, config: AppConfig): Promise<voi
     return;
   }
   const messageThreadId = ctx.message?.message_thread_id;
-  for (const chunk of chunkText(text, config.maxTelegramMessageChars)) {
+  for (const chunk of markdownV2Chunks(text, config.maxTelegramMessageChars)) {
     const options =
       typeof messageThreadId === "number"
         ? {
             message_thread_id: messageThreadId,
             link_preview_options: { is_disabled: true },
+            parse_mode: "MarkdownV2" as const,
           }
         : {
             link_preview_options: { is_disabled: true },
+            parse_mode: "MarkdownV2" as const,
           };
     await ctx.api.sendMessage(chatId, chunk, options);
   }
@@ -666,10 +668,11 @@ async function sendText(
   binding: TopicBinding,
   text: string,
 ): Promise<void> {
-  for (const chunk of chunkText(text, config.maxTelegramMessageChars)) {
+  for (const chunk of markdownV2Chunks(text, config.maxTelegramMessageChars)) {
     await bot.api.sendMessage(binding.chatId, chunk, {
       message_thread_id: binding.messageThreadId,
       link_preview_options: { is_disabled: true },
+      parse_mode: "MarkdownV2",
     });
   }
 }
