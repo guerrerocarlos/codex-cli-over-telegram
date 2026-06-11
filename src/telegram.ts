@@ -13,6 +13,10 @@ interface TopicRef {
   messageThreadId: number;
 }
 
+interface SendOptions {
+  notify?: boolean;
+}
+
 export function createTelegramBot(
   config: AppConfig,
   storage: Storage,
@@ -263,7 +267,7 @@ export function createTelegramBot(
       await ctx.api.sendDocument(
         binding.chatId,
         new InputFile(Buffer.from(diff), "diff.patch"),
-        { message_thread_id: binding.messageThreadId },
+        { message_thread_id: binding.messageThreadId, disable_notification: true },
       );
     } else if (diff.trim()) {
       await reply(ctx, codeBlock(diff, "diff"), config);
@@ -499,7 +503,13 @@ async function executeRun(
 
       if (event.type === "failed") {
         storage.failRun(run.id, event.error, event.exitCode ?? null);
-        await sendText(bot, config, binding, `Run #${run.id} failed:\n${codeBlock(truncateText(event.error, 2500))}`);
+        await sendText(
+          bot,
+          config,
+          binding,
+          `Run #${run.id} failed:\n${codeBlock(truncateText(event.error, 2500))}`,
+          { notify: true },
+        );
         return;
       }
 
@@ -514,11 +524,14 @@ async function executeRun(
       config,
       binding,
       `Completed run #${run.id}.\n\n${codeBlock(finalMessage || "Codex completed without a final message.")}`,
+      { notify: true },
     );
   } catch (error) {
     const message = errorMessage(error);
     storage.failRun(run.id, message);
-    await sendText(bot, config, binding, `Run #${run.id} failed:\n${codeBlock(truncateText(message, 2500))}`);
+    await sendText(bot, config, binding, `Run #${run.id} failed:\n${codeBlock(truncateText(message, 2500))}`, {
+      notify: true,
+    });
   } finally {
     if (lockAcquired) {
       storage.releaseLock(binding.repoPath, run.id);
@@ -653,10 +666,12 @@ async function reply(ctx: Context, text: string, config: AppConfig): Promise<voi
             message_thread_id: messageThreadId,
             link_preview_options: { is_disabled: true },
             parse_mode: "MarkdownV2" as const,
+            disable_notification: true,
           }
         : {
             link_preview_options: { is_disabled: true },
             parse_mode: "MarkdownV2" as const,
+            disable_notification: true,
           };
     await ctx.api.sendMessage(chatId, chunk, options);
   }
@@ -667,12 +682,15 @@ async function sendText(
   config: AppConfig,
   binding: TopicBinding,
   text: string,
+  options: SendOptions = {},
 ): Promise<void> {
-  for (const chunk of markdownV2Chunks(text, config.maxTelegramMessageChars)) {
+  const chunks = markdownV2Chunks(text, config.maxTelegramMessageChars);
+  for (const [index, chunk] of chunks.entries()) {
     await bot.api.sendMessage(binding.chatId, chunk, {
       message_thread_id: binding.messageThreadId,
       link_preview_options: { is_disabled: true },
       parse_mode: "MarkdownV2",
+      disable_notification: !(options.notify === true && index === 0),
     });
   }
 }
