@@ -282,55 +282,21 @@ export function createTelegramBot(
     await reply(ctx, "Unbound this topic.", config);
   });
 
+  bot.command("ask", async (ctx) => {
+    const text = ctx.match.trim();
+    if (!text) {
+      await reply(ctx, "Usage: /ask what you want Codex to do", config);
+      return;
+    }
+    await handlePrompt(ctx, config, storage, codex, bot, queue, text);
+  });
+
   bot.on("message:text", async (ctx) => {
     const text = ctx.message.text.trim();
     if (!text || text.startsWith("/")) {
       return;
     }
-
-    const binding = await requireBinding(ctx, config, storage);
-    if (!binding) {
-      return;
-    }
-
-    const active = storage.getActiveRun(binding.id);
-    if (active && active.status === "running" && codex.steer) {
-      try {
-        const steered = await codex.steer(binding.id, text);
-        if (steered) {
-          storage.audit({
-            telegramUserId: ctx.from?.id ?? null,
-            chatId: binding.chatId,
-            messageThreadId: binding.messageThreadId,
-            eventType: "run_steered",
-            details: { runId: active.id },
-          });
-          await reply(ctx, `Sent steering note to run #${active.id}.`, config);
-          return;
-        }
-      } catch (error) {
-        await reply(ctx, `Could not steer active run; queued as a follow-up.\n${errorMessage(error)}`, config);
-      }
-    }
-
-    const key = topicKey(binding.chatId, binding.messageThreadId);
-    const queuedBehind = queue.depth(key);
-    const run = storage.createRun(binding.id, ctx.message.message_id, text);
-
-    if (queuedBehind > 0) {
-      await reply(ctx, `Queued run #${run.id} behind ${queuedBehind} active/queued run(s).`, config);
-    } else {
-      await reply(ctx, `Started run #${run.id} in ${binding.repoPath} (${binding.sandboxMode}).`, config);
-    }
-
-    queue.enqueue(key, async () => {
-      const freshBinding = storage.getBindingById(binding.id);
-      if (!freshBinding) {
-        storage.failRun(run.id, "topic binding was removed before the run started");
-        return;
-      }
-      await executeRun(bot, config, storage, codex, freshBinding, run, text);
-    });
+    await handlePrompt(ctx, config, storage, codex, bot, queue, text);
   });
 
   bot.catch((error) => {
@@ -338,6 +304,60 @@ export function createTelegramBot(
   });
 
   return bot;
+}
+
+async function handlePrompt(
+  ctx: Context,
+  config: AppConfig,
+  storage: Storage,
+  codex: CodexBackend,
+  bot: Bot,
+  queue: RunQueue,
+  text: string,
+): Promise<void> {
+  const binding = await requireBinding(ctx, config, storage);
+  if (!binding) {
+    return;
+  }
+
+  const active = storage.getActiveRun(binding.id);
+  if (active && active.status === "running" && codex.steer) {
+    try {
+      const steered = await codex.steer(binding.id, text);
+      if (steered) {
+        storage.audit({
+          telegramUserId: ctx.from?.id ?? null,
+          chatId: binding.chatId,
+          messageThreadId: binding.messageThreadId,
+          eventType: "run_steered",
+          details: { runId: active.id },
+        });
+        await reply(ctx, `Sent steering note to run #${active.id}.`, config);
+        return;
+      }
+    } catch (error) {
+      await reply(ctx, `Could not steer active run; queued as a follow-up.\n${errorMessage(error)}`, config);
+    }
+  }
+
+  const key = topicKey(binding.chatId, binding.messageThreadId);
+  const queuedBehind = queue.depth(key);
+  const run = storage.createRun(binding.id, ctx.message?.message_id ?? null, text);
+
+  if (queuedBehind > 0) {
+    await reply(ctx, `Queued run #${run.id} behind ${queuedBehind} active/queued run(s).`, config);
+  } else {
+    await reply(ctx, `Started run #${run.id} in ${binding.repoPath} (${binding.sandboxMode}).`, config);
+  }
+
+  queue.enqueue(key, async () => {
+    const freshBinding = storage.getBindingById(binding.id);
+    if (!freshBinding) {
+      storage.failRun(run.id, "topic binding was removed before the run started");
+      return;
+    }
+    await executeRun(bot, config, storage, codex, freshBinding, run, text);
+  });
 }
 
 async function executeRun(
@@ -601,8 +621,9 @@ function helpText(): string {
     "/commit <message> - commit repo changes",
     "/push - push current HEAD to origin",
     "/unbind - remove this topic binding",
+    "/ask <prompt> - send a Codex prompt as a command",
     "",
-    "Any ordinary message in a bound topic is sent to Codex.",
+    "Any ordinary message in a bound topic is sent to Codex if Telegram privacy mode allows it. Use /ask when privacy mode is enabled.",
   ].join("\n");
 }
 

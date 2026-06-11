@@ -128,9 +128,12 @@ Use git worktrees if two topics need to work on the same repo concurrently.
 /commit <message>
 /push
 /unbind
+/ask <prompt>
 ```
 
 Any ordinary text message in a bound topic becomes a Codex prompt.
+If the bot has Telegram privacy mode enabled, use `/ask <prompt>` because bots
+do not receive ordinary group messages in privacy mode.
 
 When the app-server backend is active, ordinary text sent while a run is already
 running in that topic is sent as a steering note to the active turn instead of
