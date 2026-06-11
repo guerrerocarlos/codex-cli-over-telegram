@@ -14,7 +14,7 @@ export function startHealthServer(config: AppConfig): http.Server {
     response.end(
       JSON.stringify({
         ok: true,
-        service: "telegram-codex-wrapper",
+        service: "codex-cli-over-telegram",
         branch: config.deployBranch,
         commitHash: config.deployCommitHash,
         deployedAt: config.deployedAt,

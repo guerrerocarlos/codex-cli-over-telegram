@@ -106,6 +106,38 @@ npm run build
 npm start
 ```
 
+## Run At Boot
+
+Todex includes a systemd service named `codex-cli-over-telegram`.
+
+The service runs as user `codexbot`, uses `/home/codexbot` as `HOME`, and runs the app from `/opt/codex-cli-over-telegram`.
+
+Install the service:
+
+```bash
+sudo useradd --system --create-home --shell /usr/sbin/nologin codexbot || true
+sudo install -d -m 0750 -o root -g codexbot /etc/codex-cli-over-telegram
+sudo install -d -m 0750 -o codexbot -g codexbot /var/lib/codex-cli-over-telegram
+sudo cp deploy/systemd/codex-cli-over-telegram.service /etc/systemd/system/codex-cli-over-telegram.service
+sudo systemctl daemon-reload
+```
+
+Put production env vars in:
+
+```bash
+sudo nano /etc/codex-cli-over-telegram/env
+sudo chown root:codexbot /etc/codex-cli-over-telegram/env
+sudo chmod 0640 /etc/codex-cli-over-telegram/env
+```
+
+Deploy and enable startup:
+
+```bash
+./scripts/deploy.sh
+sudo systemctl enable codex-cli-over-telegram
+sudo systemctl status codex-cli-over-telegram --no-pager
+```
+
 ## Health Check
 
 Todex exposes:

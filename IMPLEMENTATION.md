@@ -1,4 +1,4 @@
-# Telegram Codex Wrapper Implementation
+# Codex CLI over Telegram Implementation
 
 ## Goal
 
@@ -595,7 +595,7 @@ Response:
 ```json
 {
   "ok": true,
-  "service": "telegram-codex-wrapper",
+  "service": "codex-cli-over-telegram",
   "branch": "main",
   "commitHash": "full-git-commit-hash",
   "deployedAt": "2026-06-11T13:45:00.000Z"
@@ -621,7 +621,7 @@ TELEGRAM_BOT_TOKEN=
 ALLOWED_TELEGRAM_USER_IDS=
 ALLOWED_TELEGRAM_CHAT_IDS=
 ALLOWED_REPO_ROOTS=/home/gnu,/srv/dev
-DATABASE_PATH=/var/lib/telegram-codex-wrapper/state.sqlite
+DATABASE_PATH=/var/lib/codex-cli-over-telegram/state.sqlite
 CODEX_BIN=codex
 DEFAULT_SANDBOX_MODE=read-only
 CODEX_ALWAYS_YOLO=false
@@ -636,14 +636,14 @@ DEPLOYED_AT=unknown
 Store secrets in a systemd environment file:
 
 ```text
-/etc/telegram-codex-wrapper/env
+/etc/codex-cli-over-telegram/env
 ```
 
 Permissions:
 
 ```bash
-sudo chown root:codexbot /etc/telegram-codex-wrapper/env
-sudo chmod 0640 /etc/telegram-codex-wrapper/env
+sudo chown root:codexbot /etc/codex-cli-over-telegram/env
+sudo chmod 0640 /etc/codex-cli-over-telegram/env
 ```
 
 ## systemd Service
@@ -652,7 +652,7 @@ Example unit:
 
 ```ini
 [Unit]
-Description=Telegram Codex Wrapper
+Description=Codex CLI over Telegram
 After=network-online.target
 Wants=network-online.target
 
@@ -660,21 +660,23 @@ Wants=network-online.target
 Type=simple
 User=codexbot
 Group=codexbot
-WorkingDirectory=/opt/telegram-codex-wrapper
-EnvironmentFile=/etc/telegram-codex-wrapper/env
-ExecStart=/usr/bin/node /opt/telegram-codex-wrapper/dist/index.js
+WorkingDirectory=/opt/codex-cli-over-telegram
+Environment=HOME=/home/codexbot
+EnvironmentFile=/etc/codex-cli-over-telegram/env
+EnvironmentFile=-/etc/codex-cli-over-telegram/deploy.env
+ExecStart=/usr/bin/node /opt/codex-cli-over-telegram/dist/index.js
 Restart=always
 RestartSec=5
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
-ReadWritePaths=/var/lib/telegram-codex-wrapper /home/gnu /srv/dev
+ReadWritePaths=/var/lib/codex-cli-over-telegram /home/codexbot /home/gnu /srv/dev
 
 [Install]
 WantedBy=multi-user.target
 ```
 
-Adjust `ReadWritePaths` to the exact repository roots the bot is allowed to manage.
+The service runs as `codexbot` with `HOME=/home/codexbot`, so Codex reads its auth and config from `/home/codexbot/.codex`. Adjust `ReadWritePaths` to the exact repository roots the bot is allowed to manage.
 
 ## Deployment Script
 
@@ -701,22 +703,22 @@ branch="$(git rev-parse --abbrev-ref HEAD)"
 commit_hash="$(git rev-parse HEAD)"
 deployed_at="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 
-sudo install -d -m 0750 -o root -g codexbot /etc/telegram-codex-wrapper
-sudo tee /etc/telegram-codex-wrapper/deploy.env >/dev/null <<EOF
+sudo install -d -m 0750 -o root -g codexbot /etc/codex-cli-over-telegram
+sudo tee /etc/codex-cli-over-telegram/deploy.env >/dev/null <<EOF
 DEPLOY_BRANCH=$branch
 DEPLOY_COMMIT_HASH=$commit_hash
 DEPLOYED_AT=$deployed_at
 EOF
 
-sudo systemctl restart telegram-codex-wrapper
+sudo systemctl restart codex-cli-over-telegram
 curl -fsS http://127.0.0.1:8787/health
 ```
 
 The production environment file can include both secret config and deploy metadata, or systemd can load two files:
 
 ```ini
-EnvironmentFile=/etc/telegram-codex-wrapper/env
-EnvironmentFile=/etc/telegram-codex-wrapper/deploy.env
+EnvironmentFile=/etc/codex-cli-over-telegram/env
+EnvironmentFile=/etc/codex-cli-over-telegram/deploy.env
 ```
 
 ## Error Handling

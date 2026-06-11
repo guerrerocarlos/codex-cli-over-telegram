@@ -1,0 +1,23 @@
+[Unit]
+Description=Codex CLI over Telegram
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=codexbot
+Group=codexbot
+WorkingDirectory=/opt/codex-cli-over-telegram
+Environment=HOME=/home/codexbot
+EnvironmentFile=/etc/codex-cli-over-telegram/env
+EnvironmentFile=-/etc/codex-cli-over-telegram/deploy.env
+ExecStart=/usr/bin/node /opt/codex-cli-over-telegram/dist/index.js
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/codex-cli-over-telegram /home/codexbot /home/gnu /srv/dev
+
+[Install]
+WantedBy=multi-user.target
