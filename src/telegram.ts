@@ -4,7 +4,7 @@ import type { CodexBackend, CodexRunEvent, RunRecord, SandboxMode, TopicBinding 
 import { Storage } from "./storage.js";
 import { RunQueue } from "./runQueue.js";
 import { resolveAllowedRepoPath } from "./pathPolicy.js";
-import { chunkText, truncateText } from "./text.js";
+import { chunkText, codeBlock, truncateText } from "./text.js";
 import { commitAll, currentBranch, diffSummary, fullDiff, isGitRepository, pushHead, statusShort } from "./git.js";
 import { logger } from "./logger.js";
 
@@ -63,11 +63,11 @@ export function createTelegramBot(
       await reply(
         ctx,
         [
-          "This chat is not authorized.",
-          "",
-          "Add this value to .env, then restart the bot:",
-          "",
-          `ALLOWED_TELEGRAM_CHAT_IDS=${chatId}`,
+      "This chat is not authorized.",
+      "",
+      "Add this value to .env, then restart the bot:",
+      "",
+      codeBlock(`ALLOWED_TELEGRAM_CHAT_IDS=${chatId}`),
         ].join("\n"),
         config,
       );
@@ -121,10 +121,10 @@ export function createTelegramBot(
         ctx,
         [
           `Bound this topic to:`,
-          binding.repoPath,
+          codeBlock(binding.repoPath),
           "",
-          `Branch: ${branch}`,
-          `Mode: ${binding.sandboxMode}`,
+          `Branch:\n${codeBlock(branch)}`,
+          `Mode:\n${codeBlock(binding.sandboxMode)}`,
           isRepo ? null : "Git commands are unavailable until this path is initialized as a repo.",
           renameResult,
         ]
@@ -150,12 +150,13 @@ export function createTelegramBot(
       ctx,
       [
         `Repo: ${binding.repoPath}`,
-        `Branch: ${branch}`,
-        `Mode: ${binding.sandboxMode}`,
-        `Codex session: ${binding.codexThreadId ?? "(new)"}`,
-        `Status: ${binding.status}`,
+        codeBlock(binding.repoPath),
+        `Branch:\n${codeBlock(branch)}`,
+        `Mode:\n${codeBlock(binding.sandboxMode)}`,
+        `Codex session:\n${codeBlock(binding.codexThreadId ?? "(new)")}`,
+        `Status:\n${codeBlock(binding.status)}`,
         "",
-        `Git status:\n${status}`,
+        `Git status:\n${codeBlock(status)}`,
       ].join("\n"),
       config,
     );
@@ -217,12 +218,16 @@ export function createTelegramBot(
     }
     const active = storage.getActiveRun(binding.id);
     if (!active) {
-      await reply(ctx, `Idle.\nRepo: ${binding.repoPath}\nMode: ${binding.sandboxMode}`, config);
+      await reply(
+        ctx,
+        [`Idle.`, `Repo:\n${codeBlock(binding.repoPath)}`, `Mode:\n${codeBlock(binding.sandboxMode)}`].join("\n"),
+        config,
+      );
       return;
     }
     await reply(
       ctx,
-      `Run #${active.id} is ${active.status}.\nPrompt: ${truncateText(active.prompt, 700)}`,
+      `Run #${active.id} is ${active.status}.\nPrompt:\n${codeBlock(truncateText(active.prompt, 700))}`,
       config,
     );
   });
@@ -251,7 +256,7 @@ export function createTelegramBot(
       return;
     }
     const summary = await diffSummary(binding.repoPath);
-    await reply(ctx, `Diff summary:\n${summary}`, config);
+    await reply(ctx, `Diff summary:\n${codeBlock(summary, "diff")}`, config);
 
     const diff = await fullDiff(binding.repoPath);
     if (diff.length > config.maxTelegramMessageChars) {
@@ -261,7 +266,7 @@ export function createTelegramBot(
         { message_thread_id: binding.messageThreadId },
       );
     } else if (diff.trim()) {
-      await reply(ctx, diff, config);
+      await reply(ctx, codeBlock(diff, "diff"), config);
     }
   });
 
@@ -291,9 +296,9 @@ export function createTelegramBot(
         eventType: "commit",
         details: { message },
       });
-      await reply(ctx, output, config);
+      await reply(ctx, codeBlock(output), config);
     } catch (error) {
-      await reply(ctx, `Commit failed:\n${errorMessage(error)}`, config);
+      await reply(ctx, `Commit failed:\n${codeBlock(errorMessage(error))}`, config);
     }
   });
 
@@ -318,9 +323,9 @@ export function createTelegramBot(
         eventType: "push",
         details: {},
       });
-      await reply(ctx, output, config);
+      await reply(ctx, codeBlock(output), config);
     } catch (error) {
-      await reply(ctx, `Push failed:\n${errorMessage(error)}`, config);
+      await reply(ctx, `Push failed:\n${codeBlock(errorMessage(error))}`, config);
     }
   });
 
@@ -387,7 +392,7 @@ async function handlePrompt(
         return;
       }
     } catch (error) {
-      await reply(ctx, `Could not steer active run; queued as a follow-up.\n${errorMessage(error)}`, config);
+      await reply(ctx, `Could not steer active run; queued as a follow-up.\n${codeBlock(errorMessage(error))}`, config);
     }
   }
 
@@ -398,7 +403,13 @@ async function handlePrompt(
   if (queuedBehind > 0) {
     await reply(ctx, `Queued run #${run.id} behind ${queuedBehind} active/queued run(s).`, config);
   } else {
-    await reply(ctx, `Started run #${run.id} in ${binding.repoPath} (${binding.sandboxMode}).`, config);
+    await reply(
+      ctx,
+      [`Started run #${run.id}.`, `Repo:\n${codeBlock(binding.repoPath)}`, `Mode:\n${codeBlock(binding.sandboxMode)}`].join(
+        "\n",
+      ),
+      config,
+    );
   }
 
   queue.enqueue(key, async () => {
@@ -468,12 +479,12 @@ async function executeRun(
       }
 
       if (event.type === "command_started") {
-        await sendText(bot, config, binding, `Running:\n${truncateText(event.text, 900)}`);
+        await sendText(bot, config, binding, `Running:\n${codeBlock(truncateText(event.text, 900), "bash")}`);
         continue;
       }
 
       if (event.type === "file_changed") {
-        await sendText(bot, config, binding, `Changed: ${event.text}`);
+        await sendText(bot, config, binding, `Changed:\n${codeBlock(event.text)}`);
         continue;
       }
 
@@ -488,7 +499,7 @@ async function executeRun(
 
       if (event.type === "failed") {
         storage.failRun(run.id, event.error, event.exitCode ?? null);
-        await sendText(bot, config, binding, `Run #${run.id} failed:\n${truncateText(event.error, 2500)}`);
+        await sendText(bot, config, binding, `Run #${run.id} failed:\n${codeBlock(truncateText(event.error, 2500))}`);
         return;
       }
 
@@ -502,12 +513,12 @@ async function executeRun(
       bot,
       config,
       binding,
-      `Completed run #${run.id}.\n\n${finalMessage || "Codex completed without a final message."}`,
+      `Completed run #${run.id}.\n\n${codeBlock(finalMessage || "Codex completed without a final message.")}`,
     );
   } catch (error) {
     const message = errorMessage(error);
     storage.failRun(run.id, message);
-    await sendText(bot, config, binding, `Run #${run.id} failed:\n${truncateText(message, 2500)}`);
+    await sendText(bot, config, binding, `Run #${run.id} failed:\n${codeBlock(truncateText(message, 2500))}`);
   } finally {
     if (lockAcquired) {
       storage.releaseLock(binding.repoPath, run.id);
@@ -586,11 +597,11 @@ async function ensureGitRepository(
     ctx,
     [
       `This path is not a git repository:`,
-      binding.repoPath,
+      codeBlock(binding.repoPath),
       "",
       "Codex can still work here. Ask it to initialize git if that is what you want:",
       "",
-      "/ask initialize this directory as a git repository",
+      codeBlock("/ask initialize this directory as a git repository"),
     ].join("\n"),
     config,
   );
@@ -613,9 +624,15 @@ function bootstrapSetupText(ctx: Context, config: AppConfig): string {
     "",
     "Add these values to .env, then restart the bot:",
     "",
-    `ALLOWED_TELEGRAM_USER_IDS=${userId ?? ""}`,
-    `ALLOWED_TELEGRAM_CHAT_IDS=${chatId ?? ""}`,
-    typeof messageThreadId === "number" ? `# Current topic message_thread_id=${messageThreadId}` : null,
+    codeBlock(
+      [
+        `ALLOWED_TELEGRAM_USER_IDS=${userId ?? ""}`,
+        `ALLOWED_TELEGRAM_CHAT_IDS=${chatId ?? ""}`,
+        typeof messageThreadId === "number" ? `# Current topic message_thread_id=${messageThreadId}` : null,
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    ),
     "",
     "For forum groups, the chat ID authorizes the whole group. Topic IDs are discovered per message and do not go in ALLOWED_TELEGRAM_CHAT_IDS.",
   ]

@@ -27,3 +27,8 @@ export function truncateText(text: string, maxChars: number): string {
   }
   return `${text.slice(0, Math.max(0, maxChars - 20)).trimEnd()}\n...truncated...`;
 }
+
+export function codeBlock(text: string, language = ""): string {
+  const body = text.trimEnd() || " ";
+  return `\`\`\`${language}\n${body}\n\`\`\``;
+}
