@@ -36,7 +36,7 @@ export class AppServerClient {
   private closed = false;
 
   constructor(private readonly codexBin: string) {
-    this.proc = spawn(codexBin, ["app-server", "--stdio"], {
+    this.proc = spawn(codexBin, ["app-server"], {
       stdio: ["pipe", "pipe", "pipe"],
       env: process.env,
     });
