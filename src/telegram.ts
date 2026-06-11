@@ -727,7 +727,7 @@ function helpText(): string {
     "/where - show repo, branch, mode, and git status",
     "/mode read - use read-only Codex sandbox",
     "/mode write - allow Codex workspace edits",
-    "/topic - rename this Telegram topic to the bound repo path",
+    "/topic - rename this Telegram topic to the bound folder name",
     "/new - start a fresh Codex session",
     "/status - show active queued/running task",
     "/stop - stop the active Codex process",
@@ -750,26 +750,9 @@ function errorMessage(error: unknown): string {
 }
 
 function topicNameForPath(repoPath: string): string {
-  if (repoPath.length <= 128) {
-    return repoPath;
-  }
-
-  const parts = repoPath.split("/").filter(Boolean);
-  let suffix = parts.pop() ?? repoPath.slice(-120);
-
-  while (parts.length > 0 && suffix.length < 120) {
-    const next = parts.pop();
-    if (!next) {
-      break;
-    }
-    const candidate = `${next}/${suffix}`;
-    if (candidate.length > 120) {
-      break;
-    }
-    suffix = candidate;
-  }
-
-  return `.../${suffix}`.slice(0, 128);
+  const trimmedPath = repoPath.replace(/\/+$/, "");
+  const folderName = trimmedPath.split("/").filter(Boolean).pop() ?? trimmedPath;
+  return (folderName || repoPath).slice(0, 128);
 }
 
 async function renameForumTopicForBinding(
