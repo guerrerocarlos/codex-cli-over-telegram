@@ -1,6 +1,7 @@
 node_modules/
 dist/
 data/
+.context/
 .env
 *.sqlite
 *.sqlite-shm
