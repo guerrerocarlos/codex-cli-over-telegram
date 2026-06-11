@@ -17,6 +17,7 @@ export interface AppConfig {
   alwaysYoloMode: boolean;
   maxParallelRuns: number;
   maxTelegramMessageChars: number;
+  telegramSendIntervalMs: number;
   healthHost: string;
   healthPort: number;
   allowUnthreadedChats: boolean;
@@ -126,6 +127,7 @@ export function loadConfig(): AppConfig {
     alwaysYoloMode: parseBoolean("CODEX_ALWAYS_YOLO", false),
     maxParallelRuns: parseInteger("MAX_PARALLEL_RUNS", 4),
     maxTelegramMessageChars: parseInteger("MAX_TELEGRAM_MESSAGE_CHARS", 3500),
+    telegramSendIntervalMs: parseInteger("TELEGRAM_SEND_INTERVAL_MS", 1500),
     healthHost: optional("HEALTH_HOST", "127.0.0.1"),
     healthPort: parseInteger("HEALTH_PORT", 8787),
     allowUnthreadedChats: parseBoolean("ALLOW_UNTHREADED_CHATS", false),

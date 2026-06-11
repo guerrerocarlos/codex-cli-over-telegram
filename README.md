@@ -31,12 +31,13 @@ DATABASE_PATH=./state.sqlite
 CODEX_BACKEND=app-server
 ALLOW_UNTHREADED_CHATS=true
 CODEX_ALWAYS_YOLO=false
+TELEGRAM_SEND_INTERVAL_MS=1500
 ```
 
 Start Todex:
 
 ```bash
-npx github:guerrerocarlos/codex-over-telegram
+npx github:guerrerocarlos/codex-cli-over-telegram
 ```
 
 Send any message to the bot. If `ALLOWED_TELEGRAM_USER_IDS` or `ALLOWED_TELEGRAM_CHAT_IDS` is blank, Todex replies with the exact IDs to put in `.env`.
@@ -91,8 +92,8 @@ Restart Todex after changing it.
 ## Run From A Clone
 
 ```bash
-git clone https://github.com/guerrerocarlos/codex-over-telegram.git
-cd codex-over-telegram
+git clone https://github.com/guerrerocarlos/codex-cli-over-telegram.git
+cd codex-cli-over-telegram
 npm install
 cp .env.example .env
 npm run dev

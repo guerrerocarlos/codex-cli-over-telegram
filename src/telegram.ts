@@ -8,6 +8,7 @@ import { codeBlock, markdownV2Chunks, truncateText } from "./text.js";
 import { commitAll, currentBranch, diffSummary, fullDiff, isGitRepository, pushHead, statusShort } from "./git.js";
 import { listCodexModels, readCodexConfig, readCodexUsage, type CodexConfigSnapshot } from "./codexMetadata.js";
 import { logger } from "./logger.js";
+import { TelegramSendQueue } from "./telegramSendQueue.js";
 
 interface TopicRef {
   chatId: number;
@@ -18,6 +19,8 @@ interface SendOptions {
   notify?: boolean;
 }
 
+const sendQueues = new WeakMap<AppConfig, TelegramSendQueue>();
+
 export function createTelegramBot(
   config: AppConfig,
   storage: Storage,
@@ -25,6 +28,7 @@ export function createTelegramBot(
 ): Bot {
   const bot = new Bot(config.telegramBotToken);
   const queue = new RunQueue(config.maxParallelRuns);
+  const sendQueue = sendQueueFor(config);
 
   bot.use(async (ctx, next) => {
     const fromId = ctx.from?.id;
@@ -42,7 +46,7 @@ export function createTelegramBot(
         eventType: "bootstrap_setup_message",
         details: { username: ctx.from?.username ?? null },
       });
-      await reply(ctx, bootstrapSetupText(ctx, config), config);
+      await reply(ctx, bootstrapSetupText(ctx, config), config, sendQueue);
       return;
     }
 
@@ -68,13 +72,14 @@ export function createTelegramBot(
       await reply(
         ctx,
         [
-      "This chat is not authorized.",
-      "",
-      "Add this value to .env, then restart the bot:",
-      "",
-      codeBlock(`ALLOWED_TELEGRAM_CHAT_IDS=${chatId}`),
+          "This chat is not authorized.",
+          "",
+          "Add this value to .env, then restart the bot:",
+          "",
+          codeBlock(`ALLOWED_TELEGRAM_CHAT_IDS=${chatId}`),
         ].join("\n"),
         config,
+        sendQueue,
       );
       return;
     }
@@ -83,7 +88,7 @@ export function createTelegramBot(
   });
 
   bot.command("help", async (ctx) => {
-    await reply(ctx, helpText(), config);
+    await reply(ctx, helpText(), config, sendQueue);
   });
 
   bot.command("bind", async (ctx) => {
@@ -521,6 +526,17 @@ export function createTelegramBot(
   return bot;
 }
 
+function sendQueueFor(config: AppConfig): TelegramSendQueue {
+  const existing = sendQueues.get(config);
+  if (existing) {
+    return existing;
+  }
+
+  const queue = new TelegramSendQueue(config.telegramSendIntervalMs);
+  sendQueues.set(config, queue);
+  return queue;
+}
+
 async function handlePrompt(
   ctx: Context,
   config: AppConfig,
@@ -829,7 +845,12 @@ function bootstrapSetupText(ctx: Context, config: AppConfig): string {
     .join("\n");
 }
 
-async function reply(ctx: Context, text: string, config: AppConfig): Promise<void> {
+async function reply(
+  ctx: Context,
+  text: string,
+  config: AppConfig,
+  sendQueue = sendQueueFor(config),
+): Promise<void> {
   const chatId = ctx.chat?.id;
   if (!chatId) {
     return;
@@ -849,7 +870,7 @@ async function reply(ctx: Context, text: string, config: AppConfig): Promise<voi
             parse_mode: "MarkdownV2" as const,
             disable_notification: true,
           };
-    await ctx.api.sendMessage(chatId, chunk, options);
+    await sendQueue.sendMessage(ctx.api, chatId, chunk, options);
   }
 }
 
@@ -862,7 +883,7 @@ async function sendText(
 ): Promise<void> {
   const chunks = markdownV2Chunks(text, config.maxTelegramMessageChars);
   for (const [index, chunk] of chunks.entries()) {
-    await bot.api.sendMessage(binding.chatId, chunk, {
+    await sendQueueFor(config).sendMessage(bot.api, binding.chatId, chunk, {
       message_thread_id: binding.messageThreadId,
       link_preview_options: { is_disabled: true },
       parse_mode: "MarkdownV2",
