@@ -1,0 +1,557 @@
+import { Bot, InputFile, type Context } from "grammy";
+import type { AppConfig } from "./config.js";
+import type { CodexBackend, CodexRunEvent, RunRecord, SandboxMode, TopicBinding } from "./types.js";
+import { Storage } from "./storage.js";
+import { RunQueue } from "./runQueue.js";
+import { resolveAllowedRepoPath } from "./pathPolicy.js";
+import { chunkText, truncateText } from "./text.js";
+import { commitAll, currentBranch, diffSummary, fullDiff, isGitRepository, pushHead, statusShort } from "./git.js";
+import { logger } from "./logger.js";
+
+interface TopicRef {
+  chatId: number;
+  messageThreadId: number;
+}
+
+export function createTelegramBot(
+  config: AppConfig,
+  storage: Storage,
+  codex: CodexBackend,
+): Bot {
+  const bot = new Bot(config.telegramBotToken);
+  const queue = new RunQueue(config.maxParallelRuns);
+
+  bot.use(async (ctx, next) => {
+    const fromId = ctx.from?.id;
+    const chatId = ctx.chat?.id;
+
+    if (!fromId || !chatId) {
+      return;
+    }
+
+    if (!config.allowedTelegramUserIds.has(fromId) || !config.allowedTelegramChatIds.has(chatId)) {
+      storage.audit({
+        telegramUserId: fromId,
+        chatId,
+        messageThreadId: ctx.message?.message_thread_id ?? null,
+        eventType: "unauthorized_message",
+        details: { username: ctx.from?.username ?? null },
+      });
+      return;
+    }
+
+    await next();
+  });
+
+  bot.command("help", async (ctx) => {
+    await reply(ctx, helpText(), config);
+  });
+
+  bot.command("bind", async (ctx) => {
+    const topic = getTopicRef(ctx, config);
+    if (!topic) {
+      await reply(ctx, "This chat has no topic id. Use this command inside a Telegram forum topic.", config);
+      return;
+    }
+
+    const requestedPath = ctx.match.trim();
+    if (!requestedPath) {
+      await reply(ctx, "Usage: /bind /absolute/path/to/repo", config);
+      return;
+    }
+
+    try {
+      const repoPath = await resolveAllowedRepoPath(requestedPath, config.allowedRepoRoots);
+      if (!(await isGitRepository(repoPath))) {
+        await reply(ctx, `Not a git repository: ${repoPath}`, config);
+        return;
+      }
+
+      const binding = storage.upsertBinding({
+        chatId: topic.chatId,
+        messageThreadId: topic.messageThreadId,
+        topicName: null,
+        repoPath,
+        createdByUserId: ctx.from?.id ?? 0,
+        sandboxMode: config.defaultSandboxMode,
+      });
+      storage.audit({
+        telegramUserId: ctx.from?.id ?? null,
+        chatId: topic.chatId,
+        messageThreadId: topic.messageThreadId,
+        eventType: "bind",
+        details: { repoPath },
+      });
+
+      const branch = await currentBranch(repoPath);
+      await reply(
+        ctx,
+        `Bound this topic to:\n${binding.repoPath}\n\nBranch: ${branch}\nMode: ${binding.sandboxMode}`,
+        config,
+      );
+    } catch (error) {
+      await reply(ctx, error instanceof Error ? error.message : String(error), config);
+    }
+  });
+
+  bot.command("where", async (ctx) => {
+    const binding = await requireBinding(ctx, config, storage);
+    if (!binding) {
+      return;
+    }
+
+    const branch = await currentBranch(binding.repoPath);
+    const status = await statusShort(binding.repoPath);
+    await reply(
+      ctx,
+      [
+        `Repo: ${binding.repoPath}`,
+        `Branch: ${branch}`,
+        `Mode: ${binding.sandboxMode}`,
+        `Codex session: ${binding.codexThreadId ?? "(new)"}`,
+        `Status: ${binding.status}`,
+        "",
+        `Git status:\n${status}`,
+      ].join("\n"),
+      config,
+    );
+  });
+
+  bot.command("mode", async (ctx) => {
+    const binding = await requireBinding(ctx, config, storage);
+    if (!binding) {
+      return;
+    }
+
+    const mode = parseMode(ctx.match.trim());
+    if (!mode) {
+      await reply(ctx, "Usage: /mode read or /mode write", config);
+      return;
+    }
+
+    storage.updateBindingMode(binding.id, mode);
+    storage.audit({
+      telegramUserId: ctx.from?.id ?? null,
+      chatId: binding.chatId,
+      messageThreadId: binding.messageThreadId,
+      eventType: "mode",
+      details: { mode },
+    });
+    await reply(ctx, `Mode set to ${mode}.`, config);
+  });
+
+  bot.command("new", async (ctx) => {
+    const binding = await requireBinding(ctx, config, storage);
+    if (!binding) {
+      return;
+    }
+    storage.updateBindingThread(binding.id, null);
+    storage.audit({
+      telegramUserId: ctx.from?.id ?? null,
+      chatId: binding.chatId,
+      messageThreadId: binding.messageThreadId,
+      eventType: "new_thread",
+      details: { bindingId: binding.id },
+    });
+    await reply(ctx, "Started a fresh Codex session for this topic.", config);
+  });
+
+  bot.command("status", async (ctx) => {
+    const binding = await requireBinding(ctx, config, storage);
+    if (!binding) {
+      return;
+    }
+    const active = storage.getActiveRun(binding.id);
+    if (!active) {
+      await reply(ctx, `Idle.\nRepo: ${binding.repoPath}\nMode: ${binding.sandboxMode}`, config);
+      return;
+    }
+    await reply(
+      ctx,
+      `Run #${active.id} is ${active.status}.\nPrompt: ${truncateText(active.prompt, 700)}`,
+      config,
+    );
+  });
+
+  bot.command("stop", async (ctx) => {
+    const binding = await requireBinding(ctx, config, storage);
+    if (!binding) {
+      return;
+    }
+
+    const active = storage.getActiveRun(binding.id);
+    const interrupted = await codex.interrupt(binding.id);
+    if (active) {
+      storage.stopRun(active.id);
+      storage.updateBindingStatus(binding.id, "idle");
+    }
+    await reply(ctx, interrupted ? "Stopped active Codex run." : "No active Codex process found.", config);
+  });
+
+  bot.command("diff", async (ctx) => {
+    const binding = await requireBinding(ctx, config, storage);
+    if (!binding) {
+      return;
+    }
+    const summary = await diffSummary(binding.repoPath);
+    await reply(ctx, `Diff summary:\n${summary}`, config);
+
+    const diff = await fullDiff(binding.repoPath);
+    if (diff.length > config.maxTelegramMessageChars) {
+      await ctx.api.sendDocument(
+        binding.chatId,
+        new InputFile(Buffer.from(diff), "diff.patch"),
+        { message_thread_id: binding.messageThreadId },
+      );
+    } else if (diff.trim()) {
+      await reply(ctx, diff, config);
+    }
+  });
+
+  bot.command("commit", async (ctx) => {
+    const binding = await requireBinding(ctx, config, storage);
+    if (!binding) {
+      return;
+    }
+    if (!(await ensureNoActiveRun(ctx, config, storage, binding))) {
+      return;
+    }
+    const message = ctx.match.trim();
+    if (!message) {
+      await reply(ctx, "Usage: /commit Commit message", config);
+      return;
+    }
+
+    try {
+      const output = await commitAll(binding.repoPath, message);
+      storage.audit({
+        telegramUserId: ctx.from?.id ?? null,
+        chatId: binding.chatId,
+        messageThreadId: binding.messageThreadId,
+        eventType: "commit",
+        details: { message },
+      });
+      await reply(ctx, output, config);
+    } catch (error) {
+      await reply(ctx, `Commit failed:\n${errorMessage(error)}`, config);
+    }
+  });
+
+  bot.command("push", async (ctx) => {
+    const binding = await requireBinding(ctx, config, storage);
+    if (!binding) {
+      return;
+    }
+    if (!(await ensureNoActiveRun(ctx, config, storage, binding))) {
+      return;
+    }
+
+    try {
+      const output = await pushHead(binding.repoPath);
+      storage.audit({
+        telegramUserId: ctx.from?.id ?? null,
+        chatId: binding.chatId,
+        messageThreadId: binding.messageThreadId,
+        eventType: "push",
+        details: {},
+      });
+      await reply(ctx, output, config);
+    } catch (error) {
+      await reply(ctx, `Push failed:\n${errorMessage(error)}`, config);
+    }
+  });
+
+  bot.command("unbind", async (ctx) => {
+    const binding = await requireBinding(ctx, config, storage);
+    if (!binding) {
+      return;
+    }
+    storage.deleteBinding(binding.id);
+    await reply(ctx, "Unbound this topic.", config);
+  });
+
+  bot.on("message:text", async (ctx) => {
+    const text = ctx.message.text.trim();
+    if (!text || text.startsWith("/")) {
+      return;
+    }
+
+    const binding = await requireBinding(ctx, config, storage);
+    if (!binding) {
+      return;
+    }
+
+    const key = topicKey(binding.chatId, binding.messageThreadId);
+    const queuedBehind = queue.depth(key);
+    const run = storage.createRun(binding.id, ctx.message.message_id, text);
+
+    if (queuedBehind > 0) {
+      await reply(ctx, `Queued run #${run.id} behind ${queuedBehind} active/queued run(s).`, config);
+    } else {
+      await reply(ctx, `Started run #${run.id} in ${binding.repoPath} (${binding.sandboxMode}).`, config);
+    }
+
+    queue.enqueue(key, async () => {
+      const freshBinding = storage.getBindingById(binding.id);
+      if (!freshBinding) {
+        storage.failRun(run.id, "topic binding was removed before the run started");
+        return;
+      }
+      await executeRun(bot, config, storage, codex, freshBinding, run, text);
+    });
+  });
+
+  bot.catch((error) => {
+    logger.error("telegram bot error", { error: String(error.error) });
+  });
+
+  return bot;
+}
+
+async function executeRun(
+  bot: Bot,
+  config: AppConfig,
+  storage: Storage,
+  codex: CodexBackend,
+  binding: TopicBinding,
+  run: RunRecord,
+  prompt: string,
+): Promise<void> {
+  let lockAcquired = false;
+  let finalMessage = "";
+  let lastProgressAt = 0;
+
+  try {
+    if (binding.sandboxMode === "workspace-write") {
+      lockAcquired = storage.acquireWriteLock(binding.repoPath, run.id);
+      if (!lockAcquired) {
+        const lock = storage.getRepoLock(binding.repoPath);
+        const message = lock
+          ? `Repo is busy. Write lock is held by run #${lock.runId} since ${lock.acquiredAt}.`
+          : "Repo is busy.";
+        storage.failRun(run.id, message);
+        await sendText(bot, config, binding, message);
+        return;
+      }
+    }
+
+    storage.updateRunStarted(run.id);
+    storage.updateBindingStatus(binding.id, "running");
+    storage.audit({
+      telegramUserId: null,
+      chatId: binding.chatId,
+      messageThreadId: binding.messageThreadId,
+      eventType: "run_started",
+      details: { runId: run.id, repoPath: binding.repoPath, sandboxMode: binding.sandboxMode },
+    });
+
+    for await (const event of codex.run({
+      bindingId: binding.id,
+      repoPath: binding.repoPath,
+      prompt,
+      codexThreadId: binding.codexThreadId,
+      sandboxMode: binding.sandboxMode,
+      approvalPolicy: binding.approvalPolicy,
+    })) {
+      if (event.type === "started" && event.threadId) {
+        storage.updateBindingThread(binding.id, event.threadId);
+        storage.updateRunCodexId(run.id, event.threadId);
+        continue;
+      }
+
+      if (event.type === "agent_message") {
+        finalMessage = event.text;
+        continue;
+      }
+
+      if (event.type === "command_started") {
+        await sendText(bot, config, binding, `Running:\n${truncateText(event.text, 900)}`);
+        continue;
+      }
+
+      if (event.type === "file_changed") {
+        await sendText(bot, config, binding, `Changed: ${event.text}`);
+        continue;
+      }
+
+      if (event.type === "progress") {
+        const nowMs = Date.now();
+        if (nowMs - lastProgressAt > 20_000) {
+          lastProgressAt = nowMs;
+          await sendChatAction(bot, binding);
+        }
+        continue;
+      }
+
+      if (event.type === "failed") {
+        storage.failRun(run.id, event.error, event.exitCode ?? null);
+        await sendText(bot, config, binding, `Run #${run.id} failed:\n${truncateText(event.error, 2500)}`);
+        return;
+      }
+
+      if (event.type === "completed") {
+        finalMessage = event.finalMessage || finalMessage;
+      }
+    }
+
+    storage.completeRun(run.id, finalMessage || "Codex completed without a final message.");
+    await sendText(
+      bot,
+      config,
+      binding,
+      `Completed run #${run.id}.\n\n${finalMessage || "Codex completed without a final message."}`,
+    );
+  } catch (error) {
+    const message = errorMessage(error);
+    storage.failRun(run.id, message);
+    await sendText(bot, config, binding, `Run #${run.id} failed:\n${truncateText(message, 2500)}`);
+  } finally {
+    if (lockAcquired) {
+      storage.releaseLock(binding.repoPath, run.id);
+    }
+    storage.updateBindingStatus(binding.id, "idle");
+  }
+}
+
+function getTopicRef(ctx: Context, config: AppConfig): TopicRef | null {
+  const chatId = ctx.chat?.id;
+  if (!chatId) {
+    return null;
+  }
+
+  const messageThreadId = ctx.message?.message_thread_id;
+  if (typeof messageThreadId === "number") {
+    return { chatId, messageThreadId };
+  }
+
+  if (config.allowUnthreadedChats) {
+    return { chatId, messageThreadId: 0 };
+  }
+
+  return null;
+}
+
+async function requireBinding(
+  ctx: Context,
+  config: AppConfig,
+  storage: Storage,
+): Promise<TopicBinding | null> {
+  const topic = getTopicRef(ctx, config);
+  if (!topic) {
+    await reply(ctx, "Use this inside a Telegram forum topic, or enable ALLOW_UNTHREADED_CHATS.", config);
+    return null;
+  }
+
+  const binding = storage.getBinding(topic.chatId, topic.messageThreadId);
+  if (!binding) {
+    await reply(ctx, "This topic is not bound. Use /bind /absolute/path/to/repo first.", config);
+    return null;
+  }
+
+  return binding;
+}
+
+async function ensureNoActiveRun(
+  ctx: Context,
+  config: AppConfig,
+  storage: Storage,
+  binding: TopicBinding,
+): Promise<boolean> {
+  const active = storage.getActiveRun(binding.id);
+  if (!active) {
+    return true;
+  }
+
+  await reply(
+    ctx,
+    `Run #${active.id} is ${active.status}. Use /status or /stop before git write operations.`,
+    config,
+  );
+  return false;
+}
+
+async function reply(ctx: Context, text: string, config: AppConfig): Promise<void> {
+  const chatId = ctx.chat?.id;
+  if (!chatId) {
+    return;
+  }
+  const messageThreadId = ctx.message?.message_thread_id;
+  for (const chunk of chunkText(text, config.maxTelegramMessageChars)) {
+    const options =
+      typeof messageThreadId === "number"
+        ? {
+            message_thread_id: messageThreadId,
+            link_preview_options: { is_disabled: true },
+          }
+        : {
+            link_preview_options: { is_disabled: true },
+          };
+    await ctx.api.sendMessage(chatId, chunk, options);
+  }
+}
+
+async function sendText(
+  bot: Bot,
+  config: AppConfig,
+  binding: TopicBinding,
+  text: string,
+): Promise<void> {
+  for (const chunk of chunkText(text, config.maxTelegramMessageChars)) {
+    await bot.api.sendMessage(binding.chatId, chunk, {
+      message_thread_id: binding.messageThreadId,
+      link_preview_options: { is_disabled: true },
+    });
+  }
+}
+
+async function sendChatAction(bot: Bot, binding: TopicBinding): Promise<void> {
+  try {
+    await bot.api.sendChatAction(binding.chatId, "typing", {
+      message_thread_id: binding.messageThreadId,
+    });
+  } catch (error) {
+    logger.warn("failed to send chat action", { error: errorMessage(error) });
+  }
+}
+
+function parseMode(input: string): SandboxMode | null {
+  if (input === "read" || input === "read-only") {
+    return "read-only";
+  }
+  if (input === "write" || input === "workspace-write") {
+    return "workspace-write";
+  }
+  return null;
+}
+
+function topicKey(chatId: number, messageThreadId: number): string {
+  return `${chatId}:${messageThreadId}`;
+}
+
+function helpText(): string {
+  return [
+    "Codex over Telegram commands:",
+    "",
+    "/bind <absolute_repo_path> - bind this topic to a git repo",
+    "/where - show repo, branch, mode, and git status",
+    "/mode read - use read-only Codex sandbox",
+    "/mode write - allow Codex workspace edits",
+    "/new - start a fresh Codex session",
+    "/status - show active queued/running task",
+    "/stop - stop the active Codex process",
+    "/diff - show diff summary and attach full diff when large",
+    "/commit <message> - commit repo changes",
+    "/push - push current HEAD to origin",
+    "/unbind - remove this topic binding",
+    "",
+    "Any ordinary message in a bound topic is sent to Codex.",
+  ].join("\n");
+}
+
+function errorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    const maybe = error as Error & { stderr?: string; stdout?: string };
+    return [error.message, maybe.stderr, maybe.stdout].filter(Boolean).join("\n");
+  }
+  return String(error);
+}

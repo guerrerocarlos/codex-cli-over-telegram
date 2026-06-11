@@ -1,0 +1,126 @@
+import "dotenv/config";
+import path from "node:path";
+import { mkdirSync } from "node:fs";
+import type { SandboxMode } from "./types.js";
+
+export interface AppConfig {
+  telegramBotToken: string;
+  allowedTelegramUserIds: Set<number>;
+  allowedTelegramChatIds: Set<number>;
+  allowedRepoRoots: string[];
+  databasePath: string;
+  codexBin: string;
+  defaultSandboxMode: SandboxMode;
+  maxParallelRuns: number;
+  maxTelegramMessageChars: number;
+  healthHost: string;
+  healthPort: number;
+  allowUnthreadedChats: boolean;
+  deployBranch: string;
+  deployCommitHash: string;
+  deployedAt: string;
+}
+
+function required(name: string): string {
+  const value = process.env[name]?.trim();
+  if (!value) {
+    throw new Error(`Missing required environment variable ${name}`);
+  }
+  return value;
+}
+
+function optional(name: string, fallback: string): string {
+  const value = process.env[name]?.trim();
+  return value && value.length > 0 ? value : fallback;
+}
+
+function parseNumberList(name: string): Set<number> {
+  const raw = required(name);
+  const values = raw
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .map((item) => {
+      const value = Number(item);
+      if (!Number.isSafeInteger(value)) {
+        throw new Error(`${name} contains a non-integer value: ${item}`);
+      }
+      return value;
+    });
+
+  if (values.length === 0) {
+    throw new Error(`${name} must contain at least one ID`);
+  }
+
+  return new Set(values);
+}
+
+function parseRepoRoots(): string[] {
+  const raw = required("ALLOWED_REPO_ROOTS");
+  const roots = raw
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .map((item) => path.resolve(item));
+
+  if (roots.length === 0) {
+    throw new Error("ALLOWED_REPO_ROOTS must contain at least one path");
+  }
+
+  return roots;
+}
+
+function parseSandboxMode(): SandboxMode {
+  const mode = optional("DEFAULT_SANDBOX_MODE", "read-only");
+  if (mode === "read-only" || mode === "workspace-write") {
+    return mode;
+  }
+  throw new Error("DEFAULT_SANDBOX_MODE must be read-only or workspace-write");
+}
+
+function parseInteger(name: string, fallback: number): number {
+  const raw = optional(name, String(fallback));
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new Error(`${name} must be a positive integer`);
+  }
+  return value;
+}
+
+function parseBoolean(name: string, fallback: boolean): boolean {
+  const raw = optional(name, String(fallback)).toLowerCase();
+  if (["1", "true", "yes", "on"].includes(raw)) {
+    return true;
+  }
+  if (["0", "false", "no", "off"].includes(raw)) {
+    return false;
+  }
+  throw new Error(`${name} must be a boolean`);
+}
+
+export function loadConfig(): AppConfig {
+  const databasePath = path.resolve(optional("DATABASE_PATH", "./data/state.sqlite"));
+  mkdirSync(path.dirname(databasePath), { recursive: true });
+
+  return {
+    telegramBotToken: required("TELEGRAM_BOT_TOKEN"),
+    allowedTelegramUserIds: parseNumberList("ALLOWED_TELEGRAM_USER_IDS"),
+    allowedTelegramChatIds: parseNumberList("ALLOWED_TELEGRAM_CHAT_IDS"),
+    allowedRepoRoots: parseRepoRoots(),
+    databasePath,
+    codexBin: optional("CODEX_BIN", "codex"),
+    defaultSandboxMode: parseSandboxMode(),
+    maxParallelRuns: parseInteger("MAX_PARALLEL_RUNS", 4),
+    maxTelegramMessageChars: parseInteger("MAX_TELEGRAM_MESSAGE_CHARS", 3500),
+    healthHost: optional("HEALTH_HOST", "127.0.0.1"),
+    healthPort: parseInteger("HEALTH_PORT", 8787),
+    allowUnthreadedChats: parseBoolean("ALLOW_UNTHREADED_CHATS", false),
+    deployBranch: optional("DEPLOY_BRANCH", "unknown"),
+    deployCommitHash: optional("DEPLOY_COMMIT_HASH", "unknown"),
+    deployedAt: optional("DEPLOYED_AT", "unknown"),
+  };
+}
+
+export function formatIdSet(ids: Set<number>): string {
+  return [...ids].join(",");
+}
