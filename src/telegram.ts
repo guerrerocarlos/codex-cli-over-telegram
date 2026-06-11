@@ -449,6 +449,7 @@ async function executeRun(
 ): Promise<void> {
   let lockAcquired = false;
   let finalMessage = "";
+  let lastSentAgentMessage = "";
   let lastProgressAt = 0;
 
   try {
@@ -493,6 +494,10 @@ async function executeRun(
 
       if (event.type === "agent_message") {
         finalMessage = event.text;
+        if (event.text.trim() && event.text !== lastSentAgentMessage) {
+          await sendText(bot, config, binding, event.text);
+          lastSentAgentMessage = event.text;
+        }
         continue;
       }
 
@@ -539,12 +544,13 @@ async function executeRun(
       }
     }
 
-    storage.completeRun(run.id, finalMessage || "Codex completed without a final message.");
+    const completionMessage = finalMessage || "Codex completed without a final message.";
+    storage.completeRun(run.id, completionMessage);
     await sendText(
       bot,
       config,
       binding,
-      finalMessage || "Codex completed without a final message.",
+      completionMessage === lastSentAgentMessage ? "Done." : completionMessage,
       { notify: true },
     );
   } catch (error) {

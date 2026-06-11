@@ -55,7 +55,6 @@ export class CodexAppServerBackend implements CodexBackend {
 
       if (mapped.type === "agent_message") {
         finalMessage = mapped.text;
-        return;
       }
 
       events.push(mapped);
