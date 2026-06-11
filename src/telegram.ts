@@ -96,11 +96,8 @@ export function createTelegramBot(
 
     try {
       const repoPath = await resolveAllowedRepoPath(requestedPath, config.allowedRepoRoots);
-      if (!(await isGitRepository(repoPath))) {
-        await reply(ctx, `Not a git repository: ${repoPath}`, config);
-        return;
-      }
       const topicName = topicNameForPath(repoPath);
+      const isRepo = await isGitRepository(repoPath);
 
       const binding = storage.upsertBinding({
         chatId: topic.chatId,
@@ -118,7 +115,7 @@ export function createTelegramBot(
         details: { repoPath },
       });
 
-      const branch = await currentBranch(repoPath);
+      const branch = isRepo ? await currentBranch(repoPath) : "(not a git repository)";
       const renameResult = await renameForumTopicForBinding(ctx, binding, topicName);
       await reply(
         ctx,
@@ -128,6 +125,7 @@ export function createTelegramBot(
           "",
           `Branch: ${branch}`,
           `Mode: ${binding.sandboxMode}`,
+          isRepo ? null : "Git commands are unavailable until this path is initialized as a repo.",
           renameResult,
         ]
           .filter(Boolean)
@@ -145,8 +143,9 @@ export function createTelegramBot(
       return;
     }
 
-    const branch = await currentBranch(binding.repoPath);
-    const status = await statusShort(binding.repoPath);
+    const isRepo = await isGitRepository(binding.repoPath);
+    const branch = isRepo ? await currentBranch(binding.repoPath) : "(not a git repository)";
+    const status = isRepo ? await statusShort(binding.repoPath) : "not a git repository";
     await reply(
       ctx,
       [
@@ -248,6 +247,9 @@ export function createTelegramBot(
     if (!binding) {
       return;
     }
+    if (!(await ensureGitRepository(ctx, config, binding))) {
+      return;
+    }
     const summary = await diffSummary(binding.repoPath);
     await reply(ctx, `Diff summary:\n${summary}`, config);
 
@@ -269,6 +271,9 @@ export function createTelegramBot(
       return;
     }
     if (!(await ensureNoActiveRun(ctx, config, storage, binding))) {
+      return;
+    }
+    if (!(await ensureGitRepository(ctx, config, binding))) {
       return;
     }
     const message = ctx.match.trim();
@@ -298,6 +303,9 @@ export function createTelegramBot(
       return;
     }
     if (!(await ensureNoActiveRun(ctx, config, storage, binding))) {
+      return;
+    }
+    if (!(await ensureGitRepository(ctx, config, binding))) {
       return;
     }
 
@@ -560,6 +568,30 @@ async function ensureNoActiveRun(
   await reply(
     ctx,
     `Run #${active.id} is ${active.status}. Use /status or /stop before git write operations.`,
+    config,
+  );
+  return false;
+}
+
+async function ensureGitRepository(
+  ctx: Context,
+  config: AppConfig,
+  binding: TopicBinding,
+): Promise<boolean> {
+  if (await isGitRepository(binding.repoPath)) {
+    return true;
+  }
+
+  await reply(
+    ctx,
+    [
+      `This path is not a git repository:`,
+      binding.repoPath,
+      "",
+      "Codex can still work here. Ask it to initialize git if that is what you want:",
+      "",
+      "/ask initialize this directory as a git repository",
+    ].join("\n"),
     config,
   );
   return false;

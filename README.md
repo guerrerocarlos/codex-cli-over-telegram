@@ -6,7 +6,7 @@ Control local Codex sessions from Telegram forum topics. Each Telegram topic can
 
 - Telegram forum topic routing with `chat_id + message_thread_id`
 - Allowlisted Telegram users and chats
-- Per-topic repo binding
+- Per-topic path binding, including non-git directories
 - Per-topic Codex session tracking through app-server or `codex exec --json`
 - Codex app-server backend for richer event streaming, resume, interrupt, and active-turn steering
 - Forum topic rename on `/bind` when the bot has Manage Topics permission
@@ -122,7 +122,7 @@ Use git worktrees if two topics need to work on the same repo concurrently.
 
 ```text
 /help
-/bind <absolute_repo_path>
+/bind <absolute_path>
 /where
 /mode read
 /mode write
@@ -137,7 +137,10 @@ Use git worktrees if two topics need to work on the same repo concurrently.
 /ask <prompt>
 ```
 
-Any ordinary text message in a bound topic becomes a Codex prompt.
+Any ordinary text message in a bound topic becomes a Codex prompt. Bound paths
+do not have to be git repositories; Codex can inspect ordinary directories and
+can initialize git if you ask it to. Git helper commands such as `/diff`,
+`/commit`, and `/push` require the bound path to be a git repository.
 If the bot has Telegram privacy mode enabled, use `/ask <prompt>` because bots
 do not receive ordinary group messages in privacy mode.
 

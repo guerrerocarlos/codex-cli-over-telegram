@@ -27,6 +27,7 @@ export class CodexExecBackend implements CodexBackend {
       "--json",
       "--cd",
       request.repoPath,
+      "--skip-git-repo-check",
       "--sandbox",
       request.sandboxMode,
       "-c",
