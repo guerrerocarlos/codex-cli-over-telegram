@@ -94,10 +94,10 @@ For group forum topics, Telegram includes `message_thread_id` on messages posted
 One Telegram topic maps to one logical Codex session.
 
 ```text
-Topic "todex"
+Topic "codex-cli-over-telegram"
   chat_id: -1001234567890
   message_thread_id: 42
-  repo_path: /home/gnu/todex
+  repo_path: /home/gnu/codex-cli-over-telegram
   codex_thread_id: thr_...
   sandbox_mode: workspace-write
   status: idle
@@ -299,11 +299,11 @@ If a message is not a command:
 Example:
 
 ```text
-User in topic "todex":
+User in topic "codex-cli-over-telegram":
   review the current diff and fix any obvious test failure
 
 Bot:
-  Started run #184 in /home/gnu/todex on branch main with workspace-write.
+  Started run #184 in /home/gnu/codex-cli-over-telegram on branch main with workspace-write.
 
 Bot:
   Running tests...
@@ -336,15 +336,15 @@ Rules:
 For many simultaneous tasks on one repository, use git worktrees:
 
 ```bash
-git worktree add ../todex-feature-a -b codex/feature-a
-git worktree add ../todex-feature-b -b codex/feature-b
+git worktree add ../codex-cli-over-telegram-feature-a -b codex/feature-a
+git worktree add ../codex-cli-over-telegram-feature-b -b codex/feature-b
 ```
 
 Then bind separate Telegram topics:
 
 ```text
-Topic A: /bind /home/gnu/todex-feature-a
-Topic B: /bind /home/gnu/todex-feature-b
+Topic A: /bind /home/gnu/codex-cli-over-telegram-feature-a
+Topic B: /bind /home/gnu/codex-cli-over-telegram-feature-b
 ```
 
 ## Codex Backend Adapter
@@ -751,7 +751,7 @@ Log structured JSON to stdout for systemd/journald:
   "event": "run_started",
   "chatId": -1001234567890,
   "messageThreadId": 42,
-  "repoPath": "/home/gnu/todex",
+  "repoPath": "/home/gnu/codex-cli-over-telegram",
   "runId": 184
 }
 ```
@@ -817,10 +817,10 @@ Never store raw secrets in audit logs.
 
 ## Example User Flow
 
-Create a Telegram topic called `todex`, then:
+Create a Telegram topic called `codex-cli-over-telegram`, then:
 
 ```text
-/bind /home/gnu/todex
+/bind /home/gnu/codex-cli-over-telegram
 /mode write
 review the current repo and make a plan, but do not edit yet
 implement the first step

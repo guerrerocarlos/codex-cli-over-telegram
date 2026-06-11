@@ -1,11 +1,11 @@
 {
-  "name": "todex",
+  "name": "codex-cli-over-telegram",
   "version": "0.1.0",
   "description": "Control local Codex sessions from Telegram forum topics.",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "todex": "dist/index.js"
+    "codex-cli-over-telegram": "dist/index.js"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",

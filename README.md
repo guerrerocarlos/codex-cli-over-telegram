@@ -1,4 +1,4 @@
-# Todex
+# Codex CLI over Telegram
 
 Run Codex from Telegram.
 
@@ -15,8 +15,8 @@ Requirements:
 Create a `.env` file:
 
 ```bash
-mkdir -p ~/.todex
-cd ~/.todex
+mkdir -p ~/.codex-cli-over-telegram
+cd ~/.codex-cli-over-telegram
 nano .env
 ```
 
@@ -34,13 +34,13 @@ CODEX_ALWAYS_YOLO=false
 TELEGRAM_SEND_INTERVAL_MS=1500
 ```
 
-Start Todex:
+Start Codex CLI over Telegram:
 
 ```bash
 npx github:guerrerocarlos/codex-cli-over-telegram
 ```
 
-Send any message to the bot. If `ALLOWED_TELEGRAM_USER_IDS` or `ALLOWED_TELEGRAM_CHAT_IDS` is blank, Todex replies with the exact IDs to put in `.env`.
+Send any message to the bot. If `ALLOWED_TELEGRAM_USER_IDS` or `ALLOWED_TELEGRAM_CHAT_IDS` is blank, Codex CLI over Telegram replies with the exact IDs to put in `.env`.
 
 Update `.env`, restart the command, then bind a folder:
 
@@ -87,7 +87,7 @@ To make every Codex run use `danger-full-access` with approvals disabled:
 CODEX_ALWAYS_YOLO=true
 ```
 
-Restart Todex after changing it.
+Restart Codex CLI over Telegram after changing it.
 
 ## Run From A Clone
 
@@ -108,7 +108,7 @@ npm start
 
 ## Run At Boot
 
-Todex includes a systemd service named `codex-cli-over-telegram`.
+Codex CLI over Telegram includes a systemd service named `codex-cli-over-telegram`.
 
 Pick the Linux user that should own Codex auth, config, repos, and runtime state. The examples below use variables so you can use your own account.
 
@@ -211,7 +211,7 @@ sudo systemctl restart codex-cli-over-telegram
 
 ## Health Check
 
-Todex exposes:
+Codex CLI over Telegram exposes:
 
 ```bash
 curl -fsS http://127.0.0.1:8787/health
@@ -219,7 +219,7 @@ curl -fsS http://127.0.0.1:8787/health
 
 ## Security
 
-Telegram access to Todex is remote control of your allowed folders.
+Telegram access to Codex CLI over Telegram is remote control of your allowed folders.
 
 Keep these tight:
 
