@@ -1,4 +1,5 @@
 import { mkdir } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { Bot, InputFile, type Context } from "grammy";
 import type { AppConfig } from "./config.js";
@@ -1619,26 +1620,40 @@ function resolveNewWorkspacePath(requestedFolder: string, allowedRoots: string[]
   if (allowedRoots.length === 0) {
     throw new Error("ALLOWED_REPO_ROOTS must contain at least one root.");
   }
-  if (path.isAbsolute(requestedFolder)) {
-    throw new Error("Use a relative folder name, not an absolute path.");
-  }
 
-  const normalized = path.normalize(requestedFolder);
-  if (normalized === "." || normalized.startsWith("..") || path.isAbsolute(normalized)) {
-    throw new Error("Folder must stay inside the first allowed repo root.");
-  }
+  const expanded = expandCreateWorkspacePath(requestedFolder);
+  const repoPath = path.isAbsolute(expanded)
+    ? path.resolve(expanded)
+    : path.resolve(allowedRoots[0] ?? "", path.normalize(expanded));
 
-  const root = allowedRoots[0];
-  if (!root) {
-    throw new Error("ALLOWED_REPO_ROOTS must contain at least one root.");
-  }
-  const repoPath = path.resolve(root, normalized);
-  const relative = path.relative(root, repoPath);
-  if (relative === "" || relative.startsWith("..") || path.isAbsolute(relative)) {
-    throw new Error("Folder must stay inside the first allowed repo root.");
+  const insideAllowedRoot = allowedRoots.some((root) => {
+    const relative = path.relative(root, repoPath);
+    return relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
+  });
+  if (!insideAllowedRoot) {
+    throw new Error(`Folder must stay inside allowed roots: ${allowedRoots.join(", ")}`);
   }
 
   return repoPath;
+}
+
+function expandCreateWorkspacePath(requestedFolder: string): string {
+  if (requestedFolder === "~") {
+    return os.homedir();
+  }
+  if (requestedFolder.startsWith("~/")) {
+    return path.join(os.homedir(), requestedFolder.slice(2));
+  }
+  if (requestedFolder.startsWith("~")) {
+    throw new Error("Only ~ and ~/ paths are supported; ~user expansion is not supported.");
+  }
+
+  const normalized = path.normalize(requestedFolder);
+  if (normalized === "." || normalized.startsWith("..")) {
+    throw new Error("Use a folder path inside an allowed root.");
+  }
+
+  return normalized;
 }
 
 function topicNameForPath(repoPath: string): string {
