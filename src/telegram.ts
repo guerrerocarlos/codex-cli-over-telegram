@@ -52,6 +52,10 @@ interface TelegramMessageWithFiles {
   sticker?: TelegramFileLike;
 }
 
+interface HandlePromptOptions {
+  forceQueue?: boolean;
+}
+
 const sendQueues = new WeakMap<AppConfig, TelegramSendQueue>();
 
 export function createTelegramBot(
@@ -544,6 +548,15 @@ export function createTelegramBot(
     await handlePrompt(ctx, config, storage, codex, bot, queue, text);
   });
 
+  bot.command("queue", async (ctx) => {
+    const text = ctx.match.trim();
+    if (!text) {
+      await reply(ctx, "Usage: /queue what Codex should do after the current run", config);
+      return;
+    }
+    await handlePrompt(ctx, config, storage, codex, bot, queue, text, { forceQueue: true });
+  });
+
   bot.on("message:file", async (ctx) => {
     await handleFileMessage(ctx, config, storage, codex, bot, queue);
   });
@@ -714,6 +727,7 @@ async function handlePrompt(
   bot: Bot,
   queue: RunQueue,
   text: string,
+  options: HandlePromptOptions = {},
 ): Promise<void> {
   const binding = await requireBinding(ctx, config, storage);
   if (!binding) {
@@ -721,7 +735,7 @@ async function handlePrompt(
   }
 
   const active = storage.getActiveRun(binding.id);
-  if (active && active.status === "running" && codex.steer) {
+  if (!options.forceQueue && active && active.status === "running" && codex.steer) {
     try {
       const steered = await codex.steer(binding.id, text);
       if (steered) {
@@ -802,6 +816,7 @@ async function executeRun(
 
     storage.updateRunStarted(run.id);
     storage.updateBindingStatus(binding.id, "running");
+    await pinRunMessage(bot, binding, run);
     storage.audit({
       telegramUserId: null,
       chatId: binding.chatId,
@@ -897,6 +912,7 @@ async function executeRun(
     if (lockAcquired) {
       storage.releaseLock(binding.repoPath, run.id);
     }
+    await unpinRunMessage(bot, binding, run);
     storage.updateBindingStatus(binding.id, "idle");
   }
 }
@@ -1068,6 +1084,44 @@ async function sendChatAction(bot: Bot, binding: TopicBinding): Promise<void> {
     });
   } catch (error) {
     logger.warn("failed to send chat action", { error: errorMessage(error) });
+  }
+}
+
+async function pinRunMessage(bot: Bot, binding: TopicBinding, run: RunRecord): Promise<void> {
+  if (run.telegramMessageId === null) {
+    return;
+  }
+
+  try {
+    await bot.api.pinChatMessage(binding.chatId, run.telegramMessageId, {
+      disable_notification: true,
+    });
+  } catch (error) {
+    logger.warn("failed to pin telegram run message", {
+      chatId: binding.chatId,
+      messageThreadId: binding.messageThreadId,
+      runId: run.id,
+      telegramMessageId: run.telegramMessageId,
+      error: errorMessage(error),
+    });
+  }
+}
+
+async function unpinRunMessage(bot: Bot, binding: TopicBinding, run: RunRecord): Promise<void> {
+  if (run.telegramMessageId === null) {
+    return;
+  }
+
+  try {
+    await bot.api.unpinChatMessage(binding.chatId, run.telegramMessageId);
+  } catch (error) {
+    logger.warn("failed to unpin telegram run message", {
+      chatId: binding.chatId,
+      messageThreadId: binding.messageThreadId,
+      runId: run.id,
+      telegramMessageId: run.telegramMessageId,
+      error: errorMessage(error),
+    });
   }
 }
 
@@ -1381,8 +1435,9 @@ function helpText(): string {
     "/push - push current HEAD to origin",
     "/unbind - remove this topic binding",
     "/ask <prompt> - send a Codex prompt as a command",
+    "/queue <prompt> - queue the next Codex turn instead of steering the active run",
     "",
-    "Any ordinary message in a bound topic is sent to Codex if Telegram privacy mode allows it. Use /ask when privacy mode is enabled.",
+    "Any ordinary message in a bound topic is sent to Codex if Telegram privacy mode allows it. During an active app-server run, ordinary messages steer the current turn. Use /queue to force a follow-up turn, or /ask when privacy mode is enabled.",
   ].join("\n");
 }
 

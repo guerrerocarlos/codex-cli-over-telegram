@@ -80,9 +80,10 @@ Useful commands:
 /commit Commit message
 /push
 /ask do something specific
+/queue do this after the current run
 ```
 
-Normal messages in a bound chat/topic are sent to Codex. Use `/ask` if Telegram privacy mode prevents the bot from seeing ordinary group messages.
+Normal messages in a bound chat/topic are sent to Codex. During an active app-server run, normal messages are sent as steering notes to the current turn. Use `/queue <prompt>` when you want the message to wait as the next turn, similar to queueing in the Codex TUI. Use `/ask` if Telegram privacy mode prevents the bot from seeing ordinary group messages.
 
 Images, documents, audio, video, and other Telegram files are saved into the bound repository's `.context/` directory and then sent to Codex as local paths. If the upload has a caption, the caption is used as the instruction. A caption starting with `/ask` is also supported.
 
