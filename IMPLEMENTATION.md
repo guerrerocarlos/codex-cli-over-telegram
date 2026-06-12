@@ -215,7 +215,7 @@ Bind the current Telegram topic to a repository path. The path must exist, be in
 /create <folder>
 ```
 
-From topic 0, create a new folder inside an allowed repo root, create a Telegram forum topic, and bind that topic to the new folder. Relative paths resolve under the first allowed root; `~/...` and absolute paths are accepted if they stay inside an allowed root.
+From topic 0, create or reuse a folder inside an allowed repo root, create a Telegram forum topic, and bind that topic to the folder. Relative paths resolve under the first allowed root; `~/...` and absolute paths are accepted if they stay inside an allowed root.
 
 ```text
 /where

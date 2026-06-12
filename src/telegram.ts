@@ -1,4 +1,4 @@
-import { mkdir } from "node:fs/promises";
+import { mkdir, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { Bot, InputFile, type Context } from "grammy";
@@ -221,7 +221,7 @@ export function createTelegramBot(
     try {
       const repoPath = resolveNewWorkspacePath(requestedFolder, config.allowedRepoRoots);
       const topicName = topicNameForPath(repoPath);
-      await mkdir(repoPath);
+      const directoryState = await ensureWorkspaceDirectory(repoPath);
 
       const createdTopic = await ctx.api.createForumTopic(topic.chatId, topicName);
       const binding = storage.upsertBinding({
@@ -247,9 +247,12 @@ export function createTelegramBot(
           "Created folder and topic:",
           codeBlock(repoPath),
           "",
+          directoryState === "existed" ? "Folder already existed; topic and binding were created." : null,
           `Topic: ${topicName}`,
           `message_thread_id: ${createdTopic.message_thread_id}`,
-        ].join("\n"),
+        ]
+          .filter(Boolean)
+          .join("\n"),
         config,
       );
       await sendText(
@@ -259,7 +262,7 @@ export function createTelegramBot(
         [
           "This topic is ready.",
           "",
-          "Bound folder:",
+          directoryState === "existed" ? "Bound existing folder:" : "Bound new folder:",
           codeBlock(repoPath),
           "",
           "Send a normal message here to start working in this folder.",
@@ -1654,6 +1657,24 @@ function expandCreateWorkspacePath(requestedFolder: string): string {
   }
 
   return normalized;
+}
+
+async function ensureWorkspaceDirectory(repoPath: string): Promise<"created" | "existed"> {
+  try {
+    await mkdir(repoPath);
+    return "created";
+  } catch (error) {
+    const maybeNodeError = error as NodeJS.ErrnoException;
+    if (maybeNodeError.code !== "EEXIST") {
+      throw error;
+    }
+
+    const existing = await stat(repoPath);
+    if (!existing.isDirectory()) {
+      throw new Error(`Path already exists and is not a directory: ${repoPath}`);
+    }
+    return "existed";
+  }
 }
 
 function topicNameForPath(repoPath: string): string {
