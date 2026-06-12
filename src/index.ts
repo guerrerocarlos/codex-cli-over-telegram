@@ -3,7 +3,7 @@ import { loadConfig } from "./config.js";
 import { Storage } from "./storage.js";
 import { CodexAppServerBackend } from "./codexAppServer.js";
 import { CodexExecBackend } from "./codexExec.js";
-import { createTelegramBot } from "./telegram.js";
+import { createTelegramBot, telegramCommandMenu } from "./telegram.js";
 import { startHealthServer } from "./health.js";
 import { logger } from "./logger.js";
 
@@ -31,6 +31,15 @@ async function main(): Promise<void> {
   process.once("SIGTERM", () => void shutdown("SIGTERM"));
 
   await bot.init();
+  try {
+    const commands = telegramCommandMenu();
+    await bot.api.setMyCommands(commands);
+    logger.info("telegram bot commands updated", { count: commands.length });
+  } catch (error) {
+    logger.warn("failed to update telegram bot commands", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
   logger.info("telegram bot starting", {
     botUsername: bot.botInfo.username,
     databasePath: config.databasePath,

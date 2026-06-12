@@ -88,6 +88,8 @@ Normal messages in a bound chat/topic are sent to Codex. During an active app-se
 
 From topic 0, use `/create <folder>` to create a new folder under the first `ALLOWED_REPO_ROOTS` entry, create a Telegram forum topic for it, and bind that new topic to the folder. The bot must be allowed to manage forum topics, and `ALLOW_UNTHREADED_CHATS=true` is required when Telegram sends the general topic without a `message_thread_id`.
 
+The bot publishes its slash-command menu to Telegram on startup, so newly added commands may require a service restart before they appear in Telegram's `/` picker.
+
 Images, documents, audio, video, and other Telegram files are saved into the bound repository's `.context/` directory and then sent to Codex as local paths. If the upload has a caption, the caption is used as the instruction. A caption starting with `/ask` is also supported.
 
 Voice messages are saved into `.context/`, converted with `ffmpeg` when Telegram sends an OpenAI-unsupported audio container, transcribed with the OpenAI API, saved as a `.transcript.txt` file, and then sent to Codex as the user's prompt. Set `OPENAI_API_KEY` before using voice transcription.

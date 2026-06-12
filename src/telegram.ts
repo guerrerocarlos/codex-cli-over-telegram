@@ -1585,6 +1585,28 @@ function helpText(): string {
   ].join("\n");
 }
 
+export function telegramCommandMenu(): Array<{ command: string; description: string }> {
+  return [
+    { command: "bind", description: "Bind this topic to a folder" },
+    { command: "create", description: "Create a folder and topic from topic 0" },
+    { command: "where", description: "Show this topic binding and status" },
+    { command: "models", description: "List available Codex models" },
+    { command: "model", description: "Show or set this topic model" },
+    { command: "plan", description: "Show or toggle plan mode" },
+    { command: "mode", description: "Set read or write sandbox mode" },
+    { command: "topic", description: "Rename this Telegram topic" },
+    { command: "new", description: "Start a fresh Codex session" },
+    { command: "status", description: "Show active queued or running task" },
+    { command: "stop", description: "Stop the active Codex process" },
+    { command: "diff", description: "Show git diff summary" },
+    { command: "commit", description: "Commit repo changes" },
+    { command: "push", description: "Push current HEAD" },
+    { command: "unbind", description: "Remove this topic binding" },
+    { command: "ask", description: "Send a Codex prompt as a command" },
+    { command: "queue", description: "Queue the next Codex turn" },
+  ];
+}
+
 function errorMessage(error: unknown): string {
   if (error instanceof Error) {
     const maybe = error as Error & { stderr?: string; stdout?: string };
