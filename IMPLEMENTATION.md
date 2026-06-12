@@ -736,7 +736,7 @@ Common user-facing errors:
 On service startup:
 
 1. Open SQLite.
-2. Mark any `running` runs as `failed` with `error_message='service restarted'`.
+2. Requeue any `queued` or `running` runs and post a restart notice in each affected Telegram topic before resuming the saved prompt.
 3. Clear stale repo locks.
 4. Start polling Telegram.
 5. Start HTTP health server.

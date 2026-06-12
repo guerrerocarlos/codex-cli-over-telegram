@@ -141,18 +141,44 @@ export class Storage {
     this.addColumnIfMissing("topic_bindings", "plan_mode", "INTEGER NOT NULL DEFAULT 0");
   }
 
-  resetInterruptedRuns(): void {
+  prepareInterruptedRunsForResume(): RunRecord[] {
+    const rows = this.db
+      .prepare("SELECT * FROM runs WHERE status IN ('queued', 'running') ORDER BY id ASC")
+      .all() as RunRow[];
+    if (rows.length === 0) {
+      return [];
+    }
+
     const timestamp = now();
     const tx = this.db.transaction(() => {
       this.db
         .prepare(
-          "UPDATE runs SET status = 'failed', completed_at = ?, error_message = COALESCE(error_message, 'service restarted') WHERE status IN ('queued', 'running')",
+          `
+          UPDATE runs
+          SET status = 'queued',
+              started_at = NULL,
+              completed_at = NULL,
+              exit_code = NULL,
+              error_message = NULL
+          WHERE status IN ('queued', 'running')
+        `,
         )
-        .run(timestamp);
+        .run();
       this.db.prepare("DELETE FROM repo_locks").run();
       this.db.prepare("UPDATE topic_bindings SET status = 'idle', updated_at = ?").run(timestamp);
     });
     tx();
+
+    return rows.map((row) =>
+      mapRun({
+        ...row,
+        status: "queued",
+        started_at: null,
+        completed_at: null,
+        exit_code: null,
+        error_message: null,
+      }),
+    );
   }
 
   upsertBinding(input: {

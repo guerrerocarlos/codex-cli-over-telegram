@@ -10,14 +10,14 @@ import { logger } from "./logger.js";
 async function main(): Promise<void> {
   const config = loadConfig();
   const storage = new Storage(config.databasePath);
-  storage.resetInterruptedRuns();
+  const interruptedRuns = storage.prepareInterruptedRunsForResume();
 
   const healthServer = startHealthServer(config);
   const codex =
     config.codexBackend === "app-server"
       ? new CodexAppServerBackend(config.codexBin)
       : new CodexExecBackend(config.codexBin);
-  const bot = createTelegramBot(config, storage, codex);
+  const bot = createTelegramBot(config, storage, codex, { recoverRuns: interruptedRuns });
 
   const shutdown = async (signal: string) => {
     logger.info("shutting down", { signal });

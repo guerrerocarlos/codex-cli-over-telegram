@@ -89,6 +89,8 @@ Images, documents, audio, video, and other Telegram files are saved into the bou
 
 Voice messages are saved into `.context/`, converted with `ffmpeg` when Telegram sends an OpenAI-unsupported audio container, transcribed with the OpenAI API, saved as a `.transcript.txt` file, and then sent to Codex as the user's prompt. Set `OPENAI_API_KEY` before using voice transcription.
 
+If the service restarts while runs are queued or active, it requeues those saved runs on startup and posts a notice in each affected Telegram topic before resuming from the saved prompt.
+
 ## YOLO Mode
 
 To make every Codex run use `danger-full-access` with approvals disabled:

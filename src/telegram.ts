@@ -56,12 +56,17 @@ interface HandlePromptOptions {
   forceQueue?: boolean;
 }
 
+interface CreateTelegramBotOptions {
+  recoverRuns?: RunRecord[];
+}
+
 const sendQueues = new WeakMap<AppConfig, TelegramSendQueue>();
 
 export function createTelegramBot(
   config: AppConfig,
   storage: Storage,
   codex: CodexBackend,
+  options: CreateTelegramBotOptions = {},
 ): Bot {
   const bot = new Bot(config.telegramBotToken);
   const queue = new RunQueue(config.maxParallelRuns);
@@ -573,6 +578,12 @@ export function createTelegramBot(
     logger.error("telegram bot error", { error: String(error.error) });
   });
 
+  if (options.recoverRuns?.length) {
+    queueMicrotask(() => {
+      void resumeInterruptedRuns(bot, config, storage, codex, queue, options.recoverRuns ?? []);
+    });
+  }
+
   return bot;
 }
 
@@ -782,6 +793,52 @@ async function handlePrompt(
     }
     await executeRun(bot, config, storage, codex, freshBinding, run, text);
   });
+}
+
+async function resumeInterruptedRuns(
+  bot: Bot,
+  config: AppConfig,
+  storage: Storage,
+  codex: CodexBackend,
+  queue: RunQueue,
+  runs: RunRecord[],
+): Promise<void> {
+  for (const run of runs) {
+    const binding = storage.getBindingById(run.bindingId);
+    if (!binding) {
+      storage.failRun(run.id, "topic binding was removed before the service could resume the run");
+      continue;
+    }
+
+    const key = topicKey(binding.chatId, binding.messageThreadId);
+    queue.enqueue(key, async () => {
+      const freshBinding = storage.getBindingById(run.bindingId);
+      if (!freshBinding) {
+        storage.failRun(run.id, "topic binding was removed before the service could resume the run");
+        return;
+      }
+
+      storage.audit({
+        telegramUserId: null,
+        chatId: freshBinding.chatId,
+        messageThreadId: freshBinding.messageThreadId,
+        eventType: "run_resumed_after_restart",
+        details: { runId: run.id, repoPath: freshBinding.repoPath },
+      });
+
+      await sendText(
+        bot,
+        config,
+        freshBinding,
+        [
+          `Service restarted while run #${run.id} was active or queued.`,
+          "Resuming it now from the saved prompt.",
+        ].join("\n"),
+        { notify: true },
+      );
+      await executeRun(bot, config, storage, codex, freshBinding, run, run.prompt);
+    });
+  }
 }
 
 async function executeRun(
