@@ -1,5 +1,5 @@
 import Database from "better-sqlite3";
-import type { RunRecord, RunStatus, SandboxMode, TopicBinding } from "./types.js";
+import type { InterruptedRunRecord, RunRecord, RunStatus, SandboxMode, TopicBinding } from "./types.js";
 
 interface BindingRow {
   id: number;
@@ -141,7 +141,7 @@ export class Storage {
     this.addColumnIfMissing("topic_bindings", "plan_mode", "INTEGER NOT NULL DEFAULT 0");
   }
 
-  prepareInterruptedRunsForResume(): RunRecord[] {
+  prepareInterruptedRunsForResume(): InterruptedRunRecord[] {
     const rows = this.db
       .prepare("SELECT * FROM runs WHERE status IN ('queued', 'running') ORDER BY id ASC")
       .all() as RunRow[];
@@ -169,8 +169,8 @@ export class Storage {
     });
     tx();
 
-    return rows.map((row) =>
-      mapRun({
+    return rows.map((row) => ({
+      ...mapRun({
         ...row,
         status: "queued",
         started_at: null,
@@ -178,7 +178,8 @@ export class Storage {
         exit_code: null,
         error_message: null,
       }),
-    );
+      interruptedStatus: row.status as InterruptedRunRecord["interruptedStatus"],
+    }));
   }
 
   upsertBinding(input: {

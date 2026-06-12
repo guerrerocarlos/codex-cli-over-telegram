@@ -33,6 +33,10 @@ export interface RunRecord {
   errorMessage: string | null;
 }
 
+export interface InterruptedRunRecord extends RunRecord {
+  interruptedStatus: Extract<RunStatus, "queued" | "running">;
+}
+
 export interface CodexRunRequest {
   bindingId: number;
   repoPath: string;

@@ -89,7 +89,9 @@ Images, documents, audio, video, and other Telegram files are saved into the bou
 
 Voice messages are saved into `.context/`, converted with `ffmpeg` when Telegram sends an OpenAI-unsupported audio container, transcribed with the OpenAI API, saved as a `.transcript.txt` file, and then sent to Codex as the user's prompt. Set `OPENAI_API_KEY` before using voice transcription.
 
-If the service restarts while runs are queued or active, it requeues those saved runs on startup and posts a notice in each affected Telegram topic before resuming from the saved prompt.
+The bot pins the message that triggers each run and leaves the latest prompt pinned after completion so the task remains easy to find.
+
+If the service restarts while runs are queued or active, it requeues those saved runs on startup and posts a notice in each affected Telegram topic. Queued runs start from the saved prompt. Interrupted running runs resume the saved Codex thread with a continue-style prompt instead of replaying the original prompt from scratch.
 
 ## YOLO Mode
 

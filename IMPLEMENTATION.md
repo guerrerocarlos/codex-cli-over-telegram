@@ -736,7 +736,7 @@ Common user-facing errors:
 On service startup:
 
 1. Open SQLite.
-2. Requeue any `queued` or `running` runs and post a restart notice in each affected Telegram topic before resuming the saved prompt.
+2. Requeue any `queued` or `running` runs and post a restart notice in each affected Telegram topic. Queued runs keep their saved prompt; running runs resume the saved Codex thread with a continue-style prompt.
 3. Clear stale repo locks.
 4. Start polling Telegram.
 5. Start HTTP health server.

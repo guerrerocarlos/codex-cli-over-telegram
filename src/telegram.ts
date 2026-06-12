@@ -1,6 +1,13 @@
 import { Bot, InputFile, type Context } from "grammy";
 import type { AppConfig } from "./config.js";
-import type { CodexBackend, CodexRunEvent, RunRecord, SandboxMode, TopicBinding } from "./types.js";
+import type {
+  CodexBackend,
+  CodexRunEvent,
+  InterruptedRunRecord,
+  RunRecord,
+  SandboxMode,
+  TopicBinding,
+} from "./types.js";
 import { Storage } from "./storage.js";
 import { RunQueue } from "./runQueue.js";
 import { resolveAllowedRepoPath } from "./pathPolicy.js";
@@ -57,7 +64,7 @@ interface HandlePromptOptions {
 }
 
 interface CreateTelegramBotOptions {
-  recoverRuns?: RunRecord[];
+  recoverRuns?: InterruptedRunRecord[];
 }
 
 const sendQueues = new WeakMap<AppConfig, TelegramSendQueue>();
@@ -801,7 +808,7 @@ async function resumeInterruptedRuns(
   storage: Storage,
   codex: CodexBackend,
   queue: RunQueue,
-  runs: RunRecord[],
+  runs: InterruptedRunRecord[],
 ): Promise<void> {
   for (const run of runs) {
     const binding = storage.getBindingById(run.bindingId);
@@ -830,15 +837,41 @@ async function resumeInterruptedRuns(
         bot,
         config,
         freshBinding,
-        [
-          `Service restarted while run #${run.id} was active or queued.`,
-          "Resuming it now from the saved prompt.",
-        ].join("\n"),
+        resumeNoticeText(run),
         { notify: true },
       );
-      await executeRun(bot, config, storage, codex, freshBinding, run, run.prompt);
+      await executeRun(bot, config, storage, codex, freshBinding, run, resumePromptForRun(run));
     });
   }
+}
+
+function resumeNoticeText(run: InterruptedRunRecord): string {
+  if (run.interruptedStatus === "running") {
+    return [
+      `Service restarted while run #${run.id} was running.`,
+      "Resuming the saved Codex thread with a continue prompt.",
+    ].join("\n");
+  }
+
+  return [
+    `Service restarted while run #${run.id} was queued.`,
+    "Starting the saved prompt now.",
+  ].join("\n");
+}
+
+function resumePromptForRun(run: InterruptedRunRecord): string {
+  if (run.interruptedStatus === "queued") {
+    return run.prompt;
+  }
+
+  return [
+    "The Codex CLI over Telegram service restarted while the previous turn was running.",
+    "Continue the interrupted work from the existing thread and current workspace state.",
+    "Do not restart from scratch unless that is necessary to recover safely.",
+    "",
+    "Original saved prompt for reference:",
+    run.prompt,
+  ].join("\n");
 }
 
 async function executeRun(
@@ -969,7 +1002,6 @@ async function executeRun(
     if (lockAcquired) {
       storage.releaseLock(binding.repoPath, run.id);
     }
-    await unpinRunMessage(bot, binding, run);
     storage.updateBindingStatus(binding.id, "idle");
   }
 }
@@ -1155,24 +1187,6 @@ async function pinRunMessage(bot: Bot, binding: TopicBinding, run: RunRecord): P
     });
   } catch (error) {
     logger.warn("failed to pin telegram run message", {
-      chatId: binding.chatId,
-      messageThreadId: binding.messageThreadId,
-      runId: run.id,
-      telegramMessageId: run.telegramMessageId,
-      error: errorMessage(error),
-    });
-  }
-}
-
-async function unpinRunMessage(bot: Bot, binding: TopicBinding, run: RunRecord): Promise<void> {
-  if (run.telegramMessageId === null) {
-    return;
-  }
-
-  try {
-    await bot.api.unpinChatMessage(binding.chatId, run.telegramMessageId);
-  } catch (error) {
-    logger.warn("failed to unpin telegram run message", {
       chatId: binding.chatId,
       messageThreadId: binding.messageThreadId,
       runId: run.id,
