@@ -1,3 +1,5 @@
+import { mkdir } from "node:fs/promises";
+import path from "node:path";
 import { Bot, InputFile, type Context } from "grammy";
 import type { AppConfig } from "./config.js";
 import type {
@@ -195,6 +197,76 @@ export function createTelegramBot(
       );
     } catch (error) {
       await reply(ctx, error instanceof Error ? error.message : String(error), config);
+    }
+  });
+
+  bot.command("create", async (ctx) => {
+    const topic = getTopicRef(ctx, config);
+    if (!topic) {
+      await reply(ctx, "Use /create from topic 0. Enable ALLOW_UNTHREADED_CHATS for the general topic.", config);
+      return;
+    }
+    if (topic.messageThreadId !== 0) {
+      await reply(ctx, "Use /create only from topic 0 so new workspaces are created from one place.", config);
+      return;
+    }
+
+    const requestedFolder = ctx.match.trim();
+    if (!requestedFolder) {
+      await reply(ctx, "Usage: /create folder-name", config);
+      return;
+    }
+
+    try {
+      const repoPath = resolveNewWorkspacePath(requestedFolder, config.allowedRepoRoots);
+      const topicName = topicNameForPath(repoPath);
+      await mkdir(repoPath);
+
+      const createdTopic = await ctx.api.createForumTopic(topic.chatId, topicName);
+      const binding = storage.upsertBinding({
+        chatId: topic.chatId,
+        messageThreadId: createdTopic.message_thread_id,
+        topicName,
+        repoPath,
+        createdByUserId: ctx.from?.id ?? 0,
+        sandboxMode: effectiveSandboxMode(config, config.defaultSandboxMode),
+      });
+
+      storage.audit({
+        telegramUserId: ctx.from?.id ?? null,
+        chatId: topic.chatId,
+        messageThreadId: createdTopic.message_thread_id,
+        eventType: "create_workspace_topic",
+        details: { repoPath, topicName },
+      });
+
+      await reply(
+        ctx,
+        [
+          "Created folder and topic:",
+          codeBlock(repoPath),
+          "",
+          `Topic: ${topicName}`,
+          `message_thread_id: ${createdTopic.message_thread_id}`,
+        ].join("\n"),
+        config,
+      );
+      await sendText(
+        bot,
+        config,
+        binding,
+        [
+          "This topic is ready.",
+          "",
+          "Bound folder:",
+          codeBlock(repoPath),
+          "",
+          "Send a normal message here to start working in this folder.",
+        ].join("\n"),
+        { notify: true },
+      );
+    } catch (error) {
+      await reply(ctx, `Could not create workspace topic:\n${codeBlock(errorMessage(error))}`, config);
     }
   });
 
@@ -1491,6 +1563,7 @@ function helpText(): string {
     "Codex over Telegram commands:",
     "",
     "/bind <absolute_repo_path> - bind this topic to a git repo",
+    "/create <folder> - from topic 0, create a folder, topic, and binding",
     "/where - show repo, branch, mode, and git status",
     "/models - list available Codex models",
     "/model - show or set this topic's Codex model",
@@ -1518,6 +1591,32 @@ function errorMessage(error: unknown): string {
     return [error.message, maybe.stderr, maybe.stdout].filter(Boolean).join("\n");
   }
   return String(error);
+}
+
+function resolveNewWorkspacePath(requestedFolder: string, allowedRoots: string[]): string {
+  if (allowedRoots.length === 0) {
+    throw new Error("ALLOWED_REPO_ROOTS must contain at least one root.");
+  }
+  if (path.isAbsolute(requestedFolder)) {
+    throw new Error("Use a relative folder name, not an absolute path.");
+  }
+
+  const normalized = path.normalize(requestedFolder);
+  if (normalized === "." || normalized.startsWith("..") || path.isAbsolute(normalized)) {
+    throw new Error("Folder must stay inside the first allowed repo root.");
+  }
+
+  const root = allowedRoots[0];
+  if (!root) {
+    throw new Error("ALLOWED_REPO_ROOTS must contain at least one root.");
+  }
+  const repoPath = path.resolve(root, normalized);
+  const relative = path.relative(root, repoPath);
+  if (relative === "" || relative.startsWith("..") || path.isAbsolute(relative)) {
+    throw new Error("Folder must stay inside the first allowed repo root.");
+  }
+
+  return repoPath;
 }
 
 function topicNameForPath(repoPath: string): string {

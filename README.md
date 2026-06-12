@@ -65,6 +65,7 @@ Useful commands:
 
 ```text
 /bind ~/path/to/project
+/create new-project-folder
 /where
 /models
 /model
@@ -84,6 +85,8 @@ Useful commands:
 ```
 
 Normal messages in a bound chat/topic are sent to Codex. During an active app-server run, normal messages are sent as steering notes to the current turn. Use `/queue <prompt>` when you want the message to wait as the next turn, similar to queueing in the Codex TUI. Use `/ask` if Telegram privacy mode prevents the bot from seeing ordinary group messages.
+
+From topic 0, use `/create <folder>` to create a new folder under the first `ALLOWED_REPO_ROOTS` entry, create a Telegram forum topic for it, and bind that new topic to the folder. The bot must be allowed to manage forum topics, and `ALLOW_UNTHREADED_CHATS=true` is required when Telegram sends the general topic without a `message_thread_id`.
 
 Images, documents, audio, video, and other Telegram files are saved into the bound repository's `.context/` directory and then sent to Codex as local paths. If the upload has a caption, the caption is used as the instruction. A caption starting with `/ask` is also supported.
 

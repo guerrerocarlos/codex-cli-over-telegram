@@ -212,6 +212,12 @@ CREATE TABLE audit_events (
 Bind the current Telegram topic to a repository path. The path must exist, be inside an allowlisted root, and be a git repository unless explicitly configured otherwise.
 
 ```text
+/create <folder>
+```
+
+From topic 0, create a new folder under the first allowed repo root, create a Telegram forum topic, and bind that topic to the new folder.
+
+```text
 /where
 ```
 
