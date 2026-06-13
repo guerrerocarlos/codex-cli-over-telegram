@@ -47,6 +47,9 @@ export function markdownV2Chunks(text: string, maxChars: number): string[] {
   for (const segment of parseMarkdownSegments(text)) {
     if (segment.type === "text") {
       chunks.push(...chunkEscapedText(escapeMarkdownV2Text(segment.text), maxChars));
+    } else if (segment.type === "bold") {
+      const rendered = renderBold(segment.body);
+      chunks.push(...(rendered.length <= maxChars ? [rendered] : chunkEscapedText(escapeMarkdownV2Text(segment.body), maxChars)));
     } else if (segment.type === "inlineCode") {
       const rendered = renderInlineCode(segment.body);
       chunks.push(...(rendered.length <= maxChars ? [rendered] : chunkCodeBlock(segment.body, "", maxChars)));
@@ -64,6 +67,9 @@ function renderMarkdownV2(text: string): string {
       if (segment.type === "text") {
         return escapeMarkdownV2Text(segment.text);
       }
+      if (segment.type === "bold") {
+        return renderBold(segment.body);
+      }
       if (segment.type === "inlineCode") {
         return renderInlineCode(segment.body);
       }
@@ -74,6 +80,7 @@ function renderMarkdownV2(text: string): string {
 
 type MarkdownSegment =
   | { type: "text"; text: string }
+  | { type: "bold"; body: string }
   | { type: "inlineCode"; body: string }
   | { type: "code"; language: string; body: string };
 
@@ -133,20 +140,49 @@ function appendTextSegments(segments: MarkdownSegment[], text: string): void {
 }
 
 function appendInlineTextSegments(segments: MarkdownSegment[], text: string): void {
-  const inlineCodePattern = /`([^`\n]+)`/g;
   let cursor = 0;
-  let match: RegExpExecArray | null;
 
-  while ((match = inlineCodePattern.exec(text)) !== null) {
-    if (match.index > cursor) {
-      segments.push({ type: "text", text: text.slice(cursor, match.index) });
+  while (cursor < text.length) {
+    const codeStart = text.indexOf("`", cursor);
+    const boldStart = text.indexOf("**", cursor);
+    const start = minNonNegative(codeStart, boldStart);
+
+    if (start === -1) {
+      segments.push({ type: "text", text: text.slice(cursor) });
+      break;
     }
-    segments.push({ type: "inlineCode", body: match[1] ?? "" });
-    cursor = inlineCodePattern.lastIndex;
-  }
 
-  if (cursor < text.length) {
-    segments.push({ type: "text", text: text.slice(cursor) });
+    if (start > cursor) {
+      segments.push({ type: "text", text: text.slice(cursor, start) });
+    }
+
+    if (start === codeStart) {
+      const end = text.indexOf("`", codeStart + 1);
+      if (end === -1 || text.slice(codeStart + 1, end).includes("\n")) {
+        segments.push({ type: "text", text: text.slice(codeStart, codeStart + 1) });
+        cursor = codeStart + 1;
+        continue;
+      }
+
+      segments.push({ type: "inlineCode", body: text.slice(codeStart + 1, end) });
+      cursor = end + 1;
+      continue;
+    }
+
+    const end = text.indexOf("**", boldStart + 2);
+    if (end === -1) {
+      segments.push({ type: "text", text: text.slice(boldStart, boldStart + 2) });
+      cursor = boldStart + 2;
+      continue;
+    }
+
+    const body = text.slice(boldStart + 2, end);
+    if (body.trim()) {
+      segments.push({ type: "bold", body });
+    } else {
+      segments.push({ type: "text", text: text.slice(boldStart, end + 2) });
+    }
+    cursor = end + 2;
   }
 }
 
@@ -164,6 +200,20 @@ function renderCodeBlock(body: string, language: string): string {
 
 function renderInlineCode(body: string): string {
   return `\`${escapeMarkdownV2Code(body)}\``;
+}
+
+function renderBold(body: string): string {
+  return `*${escapeMarkdownV2Text(body)}*`;
+}
+
+function minNonNegative(left: number, right: number): number {
+  if (left === -1) {
+    return right;
+  }
+  if (right === -1) {
+    return left;
+  }
+  return Math.min(left, right);
 }
 
 function sanitizeCodeLanguage(language: string): string {
