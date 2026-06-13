@@ -2,8 +2,18 @@ import { AppServerClient } from "./appServerClient.js";
 import { AsyncQueue } from "./asyncQueue.js";
 import { describeCommandOutput } from "./commandOutput.js";
 import { PLAN_MODE_DEVELOPER_INSTRUCTIONS } from "./planMode.js";
-import type { CodexBackend, CodexRunEvent, CodexRunRequest, SandboxMode } from "./types.js";
+import type {
+  CodexBackend,
+  CodexRunEvent,
+  CodexRunRequest,
+  SandboxMode,
+  ThreadTokenUsageSnapshot,
+} from "./types.js";
 import { logger } from "./logger.js";
+
+function numberOrZero(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
 
 interface ActiveTurn {
   client: AppServerClient;
@@ -137,6 +147,79 @@ export class CodexAppServerBackend implements CodexBackend {
     return true;
   }
 
+  async compactThread(threadId: string): Promise<void> {
+    const client = new AppServerClient(this.codexBin);
+    let settled = false;
+
+    try {
+      await client.initialize();
+      let cleanup = () => undefined;
+
+      const completed = new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          if (!settled) {
+            reject(new Error("Timed out waiting for app-server compaction to finish"));
+          }
+        }, 5 * 60_000);
+
+        const unsubscribe = client.onNotification((notification) => {
+          const params = notification.params as any;
+          if (params?.threadId && params.threadId !== threadId) {
+            return;
+          }
+
+          if (notification.method === "thread/compacted") {
+            settled = true;
+            cleanup();
+            resolve();
+            return;
+          }
+
+          if (notification.method === "turn/completed") {
+            const status = params?.turn?.status;
+            if (status === "failed") {
+              settled = true;
+              cleanup();
+              reject(new Error(params?.turn?.error?.message ?? "Codex compaction failed"));
+              return;
+            }
+            settled = true;
+            cleanup();
+            resolve();
+            return;
+          }
+
+          if (notification.method === "item/completed" && params?.item?.type === "contextCompaction") {
+            settled = true;
+            cleanup();
+            resolve();
+            return;
+          }
+
+          if (notification.method === "error") {
+            settled = true;
+            cleanup();
+            reject(new Error(params?.error?.message ?? "Codex compaction failed"));
+          }
+        });
+
+        cleanup = () => {
+          clearTimeout(timeout);
+          unsubscribe();
+        };
+      });
+
+      try {
+        await client.request("thread/compact/start", { threadId });
+        await completed;
+      } finally {
+        cleanup();
+      }
+    } finally {
+      client.close();
+    }
+  }
+
   private async startOrResumeThread(
     client: AppServerClient,
     request: CodexRunRequest,
@@ -185,6 +268,10 @@ export class CodexAppServerBackend implements CodexBackend {
     switch (notification.method) {
       case "turn/started": {
         return { type: "progress", text: "Codex turn started." };
+      }
+      case "thread/tokenUsage/updated": {
+        const tokenUsage = this.mapTokenUsage(params?.tokenUsage);
+        return tokenUsage ? { type: "token_usage", tokenUsage } : null;
       }
       case "item/agentMessage/delta": {
         return null;
@@ -248,6 +335,27 @@ export class CodexAppServerBackend implements CodexBackend {
       return { type: "progress", text: `Web search: ${item.query}` };
     }
     return null;
+  }
+
+  private mapTokenUsage(value: any): ThreadTokenUsageSnapshot | null {
+    if (!value?.total || !value?.last) {
+      return null;
+    }
+    return {
+      total: this.mapTokenUsageBreakdown(value.total),
+      last: this.mapTokenUsageBreakdown(value.last),
+      modelContextWindow: typeof value.modelContextWindow === "number" ? value.modelContextWindow : null,
+    };
+  }
+
+  private mapTokenUsageBreakdown(value: any): ThreadTokenUsageSnapshot["total"] {
+    return {
+      totalTokens: numberOrZero(value?.totalTokens),
+      inputTokens: numberOrZero(value?.inputTokens),
+      cachedInputTokens: numberOrZero(value?.cachedInputTokens),
+      outputTokens: numberOrZero(value?.outputTokens),
+      reasoningOutputTokens: numberOrZero(value?.reasoningOutputTokens),
+    };
   }
 
   private mapItemCompleted(item: any): CodexRunEvent | null {

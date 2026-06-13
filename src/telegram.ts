@@ -9,6 +9,7 @@ import type {
   InterruptedRunRecord,
   RunRecord,
   SandboxMode,
+  ThreadTokenUsageSnapshot,
   TopicBinding,
 } from "./types.js";
 import { Storage } from "./storage.js";
@@ -483,7 +484,40 @@ export function createTelegramBot(
       eventType: "new_thread",
       details: { bindingId: binding.id },
     });
-    await reply(ctx, "Started a fresh Codex session for this topic.", config);
+    await reply(ctx, "Started a fresh Codex thread for this topic. The next prompt will use clean context.", config);
+  });
+
+  bot.command("compact", async (ctx) => {
+    const binding = await requireBinding(ctx, config, storage);
+    if (!binding) {
+      return;
+    }
+    if (!(await ensureNoActiveRun(ctx, config, storage, binding))) {
+      return;
+    }
+    if (!binding.codexThreadId) {
+      await reply(ctx, "No Codex thread exists for this topic yet. Send a prompt first, or use /new for clean context.", config);
+      return;
+    }
+    if (!codex.compactThread) {
+      await reply(ctx, "This Codex backend does not support thread compaction.", config);
+      return;
+    }
+
+    await reply(ctx, `Compacting Codex thread:\n${codeBlock(binding.codexThreadId)}`, config);
+    try {
+      await codex.compactThread(binding.codexThreadId);
+      storage.audit({
+        telegramUserId: ctx.from?.id ?? null,
+        chatId: binding.chatId,
+        messageThreadId: binding.messageThreadId,
+        eventType: "thread_compacted",
+        details: { bindingId: binding.id, threadId: binding.codexThreadId },
+      });
+      await reply(ctx, "Compacted this topic's Codex thread.", config);
+    } catch (error) {
+      await reply(ctx, `Compact failed:\n${codeBlock(errorMessage(error))}`, config);
+    }
   });
 
   bot.command("status", async (ctx) => {
@@ -502,6 +536,7 @@ export function createTelegramBot(
           `Model:\n${codeBlock(await modelLabel(config, binding))}`,
           `Plan mode:\n${codeBlock(formatPlanMode(binding.planMode))}`,
           `Mode:\n${codeBlock(effectiveSandboxMode(config, binding.sandboxMode))}`,
+          `Context:\n${codeBlock(formatThreadTokenUsage(binding.tokenUsage))}`,
           usage,
         ].join("\n"),
         config,
@@ -514,6 +549,7 @@ export function createTelegramBot(
         `Run #${active.id} is ${active.status}.`,
         `Model:\n${codeBlock(await modelLabel(config, binding))}`,
         `Plan mode:\n${codeBlock(formatPlanMode(binding.planMode))}`,
+        `Context:\n${codeBlock(formatThreadTokenUsage(binding.tokenUsage))}`,
         `Prompt:\n${codeBlock(truncateText(active.prompt, 700))}`,
         usage,
       ].join("\n"),
@@ -1007,6 +1043,11 @@ async function executeRun(
         continue;
       }
 
+      if (event.type === "token_usage") {
+        storage.updateBindingTokenUsage(binding.id, event.tokenUsage);
+        continue;
+      }
+
       if (event.type === "agent_message") {
         finalMessage = event.text;
         if (event.text.trim() && event.text !== lastSentAgentMessage) {
@@ -1457,6 +1498,36 @@ async function readStatusText(config: AppConfig): Promise<string> {
   }
 }
 
+function formatThreadTokenUsage(tokenUsage: ThreadTokenUsageSnapshot | null): string {
+  if (!tokenUsage) {
+    return "unavailable until Codex reports token usage for this thread";
+  }
+
+  const totalTokens = tokenUsage.total.totalTokens;
+  const contextWindow = tokenUsage.modelContextWindow;
+  const lines = [
+    contextWindow
+      ? `used: ${formatNumber(totalTokens)} / ${formatNumber(contextWindow)} tokens (${formatPercent((totalTokens / contextWindow) * 100)})`
+      : `used: ${formatNumber(totalTokens)} tokens`,
+  ];
+
+  if (contextWindow) {
+    lines.push(`remaining: ${formatNumber(Math.max(0, contextWindow - totalTokens))} tokens`);
+  }
+
+  lines.push(
+    `last turn: ${formatNumber(tokenUsage.last.totalTokens)} total, ${formatNumber(tokenUsage.last.inputTokens)} input, ${formatNumber(tokenUsage.last.outputTokens)} output`,
+  );
+  if (tokenUsage.last.reasoningOutputTokens > 0) {
+    lines.push(`last reasoning output: ${formatNumber(tokenUsage.last.reasoningOutputTokens)}`);
+  }
+  if (tokenUsage.last.cachedInputTokens > 0) {
+    lines.push(`last cached input: ${formatNumber(tokenUsage.last.cachedInputTokens)}`);
+  }
+
+  return lines.join("\n");
+}
+
 function formatRateLimits(response: any): string {
   const snapshot = response?.rateLimits ?? response?.rate_limits ?? response;
   if (!snapshot) {
@@ -1575,8 +1646,9 @@ function helpText(): string {
     "/mode read - use read-only Codex sandbox",
     "/mode write - allow Codex workspace edits",
     "/topic - rename this Telegram topic to the bound folder name",
-    "/new - start a fresh Codex session",
-    "/status - show active queued/running task",
+    "/new - start a fresh Codex thread with clean context",
+    "/compact - compact this topic's Codex thread",
+    "/status - show active task and context usage",
     "/stop - stop the active Codex process",
     "/diff - show diff summary and attach full diff when large",
     "/commit <message> - commit repo changes",
@@ -1599,8 +1671,9 @@ export function telegramCommandMenu(): Array<{ command: string; description: str
     { command: "plan", description: "Show or toggle plan mode" },
     { command: "mode", description: "Set read or write sandbox mode" },
     { command: "topic", description: "Rename this Telegram topic" },
-    { command: "new", description: "Start a fresh Codex session" },
-    { command: "status", description: "Show active queued or running task" },
+    { command: "new", description: "Start a fresh Codex thread" },
+    { command: "compact", description: "Compact this topic's Codex thread" },
+    { command: "status", description: "Show task and context usage" },
     { command: "stop", description: "Stop the active Codex process" },
     { command: "diff", description: "Show git diff summary" },
     { command: "commit", description: "Commit repo changes" },

@@ -227,7 +227,13 @@ Show the current topic binding, Codex thread/session ID, sandbox mode, active ru
 /new
 ```
 
-Start a fresh Codex thread/session for this topic without changing the repo binding.
+Start a fresh Codex thread/session for this topic without changing the repo binding. The next prompt starts with clean context.
+
+```text
+/compact
+```
+
+Ask app-server to compact the current topic's saved Codex thread. Refuse while another run is queued or active for the topic.
 
 ```text
 /mode read
@@ -246,7 +252,7 @@ Set sandbox mode for future prompts in this topic:
 /status
 ```
 
-Show whether the topic has a queued or running Codex turn.
+Show whether the topic has a queued or running Codex turn and the latest reported thread context usage.
 
 ```text
 /stop

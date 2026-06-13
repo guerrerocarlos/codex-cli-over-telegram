@@ -1,5 +1,12 @@
 import Database from "better-sqlite3";
-import type { InterruptedRunRecord, RunRecord, RunStatus, SandboxMode, TopicBinding } from "./types.js";
+import type {
+  InterruptedRunRecord,
+  RunRecord,
+  RunStatus,
+  SandboxMode,
+  ThreadTokenUsageSnapshot,
+  TopicBinding,
+} from "./types.js";
 
 interface BindingRow {
   id: number;
@@ -13,6 +20,7 @@ interface BindingRow {
   sandbox_mode: SandboxMode;
   approval_policy: "never";
   status: string;
+  token_usage_json: string | null;
   created_by_user_id: number;
   created_at: string;
   updated_at: string;
@@ -49,10 +57,22 @@ function mapBinding(row: BindingRow): TopicBinding {
     sandboxMode: row.sandbox_mode,
     approvalPolicy: row.approval_policy,
     status: row.status,
+    tokenUsage: parseTokenUsage(row.token_usage_json),
     createdByUserId: row.created_by_user_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+function parseTokenUsage(value: string | null): ThreadTokenUsageSnapshot | null {
+  if (!value) {
+    return null;
+  }
+  try {
+    return JSON.parse(value) as ThreadTokenUsageSnapshot;
+  } catch {
+    return null;
+  }
 }
 
 function mapRun(row: RunRow): RunRecord {
@@ -139,6 +159,7 @@ export class Storage {
 
     this.addColumnIfMissing("topic_bindings", "model", "TEXT");
     this.addColumnIfMissing("topic_bindings", "plan_mode", "INTEGER NOT NULL DEFAULT 0");
+    this.addColumnIfMissing("topic_bindings", "token_usage_json", "TEXT");
   }
 
   prepareInterruptedRunsForResume(): InterruptedRunRecord[] {
@@ -246,20 +267,33 @@ export class Storage {
 
   updateBindingModel(bindingId: number, model: string | null): void {
     this.db
-      .prepare("UPDATE topic_bindings SET model = ?, codex_thread_id = NULL, updated_at = ? WHERE id = ?")
+      .prepare("UPDATE topic_bindings SET model = ?, codex_thread_id = NULL, token_usage_json = NULL, updated_at = ? WHERE id = ?")
       .run(model, now(), bindingId);
   }
 
   updateBindingPlanMode(bindingId: number, planMode: boolean): void {
     this.db
-      .prepare("UPDATE topic_bindings SET plan_mode = ?, codex_thread_id = NULL, updated_at = ? WHERE id = ?")
+      .prepare("UPDATE topic_bindings SET plan_mode = ?, codex_thread_id = NULL, token_usage_json = NULL, updated_at = ? WHERE id = ?")
       .run(planMode ? 1 : 0, now(), bindingId);
   }
 
   updateBindingThread(bindingId: number, codexThreadId: string | null): void {
+    if (codexThreadId) {
+      this.db
+        .prepare("UPDATE topic_bindings SET codex_thread_id = ?, updated_at = ? WHERE id = ?")
+        .run(codexThreadId, now(), bindingId);
+      return;
+    }
+
     this.db
-      .prepare("UPDATE topic_bindings SET codex_thread_id = ?, updated_at = ? WHERE id = ?")
-      .run(codexThreadId, now(), bindingId);
+      .prepare("UPDATE topic_bindings SET codex_thread_id = NULL, token_usage_json = NULL, updated_at = ? WHERE id = ?")
+      .run(now(), bindingId);
+  }
+
+  updateBindingTokenUsage(bindingId: number, tokenUsage: ThreadTokenUsageSnapshot): void {
+    this.db
+      .prepare("UPDATE topic_bindings SET token_usage_json = ?, updated_at = ? WHERE id = ?")
+      .run(JSON.stringify(tokenUsage), now(), bindingId);
   }
 
   updateBindingStatus(bindingId: number, status: string): void {

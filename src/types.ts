@@ -14,9 +14,24 @@ export interface TopicBinding {
   sandboxMode: SandboxMode;
   approvalPolicy: "never";
   status: string;
+  tokenUsage: ThreadTokenUsageSnapshot | null;
   createdByUserId: number;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface TokenUsageBreakdown {
+  totalTokens: number;
+  inputTokens: number;
+  cachedInputTokens: number;
+  outputTokens: number;
+  reasoningOutputTokens: number;
+}
+
+export interface ThreadTokenUsageSnapshot {
+  total: TokenUsageBreakdown;
+  last: TokenUsageBreakdown;
+  modelContextWindow: number | null;
 }
 
 export interface RunRecord {
@@ -50,6 +65,7 @@ export interface CodexRunRequest {
 
 export type CodexRunEvent =
   | { type: "started"; threadId?: string; text?: string }
+  | { type: "token_usage"; tokenUsage: ThreadTokenUsageSnapshot }
   | { type: "progress"; text: string }
   | { type: "command_started"; text: string }
   | { type: "command_completed"; text: string }
@@ -62,4 +78,5 @@ export interface CodexBackend {
   run(request: CodexRunRequest): AsyncIterable<CodexRunEvent>;
   interrupt(bindingId: number): Promise<boolean>;
   steer?(bindingId: number, prompt: string): Promise<boolean>;
+  compactThread?(threadId: string): Promise<void>;
 }

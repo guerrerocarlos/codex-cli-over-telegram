@@ -77,6 +77,7 @@ Useful commands:
 /status
 /stop
 /new
+/compact
 /diff
 /commit Commit message
 /push
@@ -97,6 +98,8 @@ Voice messages are saved into `.context/`, converted with `ffmpeg` when Telegram
 The bot pins the message that triggers each run and leaves the latest prompt pinned after completion so the task remains easy to find.
 
 If the service restarts while runs are queued or active, it requeues those saved runs on startup and posts a notice in each affected Telegram topic. Queued runs start from the saved prompt. Interrupted running runs resume the saved Codex thread with a continue-style prompt instead of replaying the original prompt from scratch.
+
+Use `/compact` to ask Codex app-server to compact the current topic's saved thread. Use `/new` to clear the saved thread id for the topic; the next prompt starts a new Codex thread with clean context. `/status` shows the latest thread context token usage once Codex has reported it for that topic.
 
 ## YOLO Mode
 
