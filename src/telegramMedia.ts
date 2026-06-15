@@ -72,11 +72,11 @@ export async function saveTelegramFileToContext(
   await mkdir(contextDir, { recursive: true });
   await ensureContextGitignore(contextDir);
 
-  const destination = path.join(
-    contextDir,
-    contextFilename(ref, file.file_path, telegramMessageId, new Date()),
-  );
-  await writeFile(destination, bytes, { flag: "wx" });
+  const receivedAt = new Date();
+  const uploadDir = path.join(contextDir, uploadDirectoryName(telegramMessageId, receivedAt));
+  await mkdir(uploadDir, { recursive: true });
+
+  const destination = await writeUniqueFile(uploadDir, contextFilename(ref, file.file_path), bytes);
 
   return {
     kind: ref.kind,
@@ -206,21 +206,37 @@ async function ensureContextGitignore(contextDir: string): Promise<void> {
   }
 }
 
-function contextFilename(
-  ref: TelegramFileRef,
-  telegramFilePath: string,
-  telegramMessageId: number | null,
-  now: Date,
-): string {
+async function writeUniqueFile(directory: string, filename: string, bytes: Buffer): Promise<string> {
+  const parsed = path.parse(filename);
+  for (let index = 1; index <= 100; index += 1) {
+    const candidateName = index === 1 ? filename : `${parsed.name}-${index}${parsed.ext}`;
+    const candidatePath = path.join(directory, candidateName);
+    try {
+      await writeFile(candidatePath, bytes, { flag: "wx" });
+      return candidatePath;
+    } catch (error) {
+      if (!isNodeError(error) || error.code !== "EEXIST") {
+        throw error;
+      }
+    }
+  }
+
+  throw new Error(`Could not choose an unused filename for ${filename}.`);
+}
+
+function uploadDirectoryName(telegramMessageId: number | null, now: Date): string {
+  const timestamp = now.toISOString().replace(/[:.]/g, "-");
+  const messagePart = telegramMessageId === null ? "msg-unknown" : `msg-${telegramMessageId}`;
+  return `telegram-${timestamp}-${messagePart}`;
+}
+
+function contextFilename(ref: TelegramFileRef, telegramFilePath: string): string {
   const originalExtension = extensionFrom(ref.originalName) ?? extensionFrom(telegramFilePath);
   const extension = originalExtension ?? extensionFromMime(ref.mimeType) ?? ".bin";
   const originalBase = ref.originalName ? path.basename(ref.originalName, path.extname(ref.originalName)) : ref.kind;
-  const timestamp = now.toISOString().replace(/[:.]/g, "-");
-  const messagePart = telegramMessageId === null ? "msg-unknown" : `msg-${telegramMessageId}`;
-  const uniquePart = sanitizeFilenamePart(ref.fileUniqueId).slice(0, 18) || "file";
   const namePart = sanitizeFilenamePart(originalBase) || ref.kind;
 
-  return `${timestamp}-${messagePart}-${uniquePart}-${namePart}${extension.toLowerCase()}`;
+  return `${namePart}${extension.toLowerCase()}`;
 }
 
 function sanitizeFilenamePart(value: string): string {
