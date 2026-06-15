@@ -66,10 +66,20 @@ interface TelegramMessageWithFiles {
 
 interface HandlePromptOptions {
   forceQueue?: boolean;
+  contextFiles?: ContextFilePrompt[];
+  includePendingContext?: boolean;
 }
 
 interface CreateTelegramBotOptions {
   recoverRuns?: InterruptedRunRecord[];
+}
+
+interface ContextFilePrompt {
+  kind: string;
+  relativePath: string;
+  originalName: string | null;
+  mimeType: string | null;
+  fileSize: number;
 }
 
 const sendQueues = new WeakMap<AppConfig, TelegramSendQueue>();
@@ -772,6 +782,22 @@ async function handleFileMessage(
       });
     }
 
+    if (!instruction.text) {
+      storage.addPendingContextFiles(binding.id, ctx.message?.message_id ?? null, storedFiles);
+      storage.audit({
+        telegramUserId: ctx.from?.id ?? null,
+        chatId: binding.chatId,
+        messageThreadId: binding.messageThreadId,
+        eventType: "telegram_file_staged",
+        details: {
+          count: storedFiles.length,
+          paths: storedFiles.map((file) => file.relativePath),
+        },
+      });
+      await reply(ctx, stagedFilesSavedText(storedFiles), config);
+      return;
+    }
+
     await reply(ctx, uploadedFilesSavedText(storedFiles), config);
     await handlePrompt(
       ctx,
@@ -780,7 +806,8 @@ async function handleFileMessage(
       codex,
       bot,
       queue,
-      uploadedFilesPrompt(storedFiles, instruction.text),
+      instruction.text,
+      { contextFiles: storedFiles },
     );
   } catch (error) {
     await reply(ctx, `Could not save Telegram upload:\n${codeBlock(errorMessage(error))}`, config);
@@ -865,17 +892,23 @@ async function handlePrompt(
     return;
   }
 
+  const promptContextFiles = [
+    ...(options.includePendingContext === false ? [] : storage.consumePendingContextFiles(binding.id)),
+    ...(options.contextFiles ?? []),
+  ];
+  const promptText = promptContextFiles.length > 0 ? uploadedFilesPrompt(promptContextFiles, text) : text;
+
   const active = storage.getActiveRun(binding.id);
   if (!options.forceQueue && active && active.status === "running" && codex.steer) {
     try {
-      const steered = await codex.steer(binding.id, text);
+      const steered = await codex.steer(binding.id, promptText);
       if (steered) {
         storage.audit({
           telegramUserId: ctx.from?.id ?? null,
           chatId: binding.chatId,
           messageThreadId: binding.messageThreadId,
           eventType: "run_steered",
-          details: { runId: active.id },
+          details: { runId: active.id, contextFileCount: promptContextFiles.length },
         });
         await reply(ctx, `Sent steering note to run #${active.id}.`, config);
         return;
@@ -887,7 +920,7 @@ async function handlePrompt(
 
   const key = topicKey(binding.chatId, binding.messageThreadId);
   const queuedBehind = queue.depth(key);
-  const run = storage.createRun(binding.id, ctx.message?.message_id ?? null, text);
+  const run = storage.createRun(binding.id, ctx.message?.message_id ?? null, promptText);
 
   if (queuedBehind > 0) {
     await reply(ctx, `Queued run #${run.id} behind ${queuedBehind} active/queued run(s).`, config);
@@ -911,7 +944,7 @@ async function handlePrompt(
       storage.failRun(run.id, "topic binding was removed before the run started");
       return;
     }
-    await executeRun(bot, config, storage, codex, freshBinding, run, text);
+    await executeRun(bot, config, storage, codex, freshBinding, run, promptText);
   });
 }
 
@@ -1434,7 +1467,16 @@ function uploadedFilesSavedText(files: StoredContextFile[]): string {
   return ["Saved Telegram upload to:", codeBlock(files.map((file) => file.relativePath).join("\n"))].join("\n");
 }
 
-function uploadedFilesPrompt(files: StoredContextFile[], instruction: string): string {
+function stagedFilesSavedText(files: ContextFilePrompt[]): string {
+  return [
+    "Saved Telegram upload for the next prompt:",
+    codeBlock(files.map((file) => file.relativePath).join("\n")),
+    "",
+    "Send text in this topic, or send another upload with a caption, to include the saved file(s).",
+  ].join("\n");
+}
+
+function uploadedFilesPrompt(files: ContextFilePrompt[], instruction: string): string {
   const lines = [
     "Telegram uploaded file(s) were saved under this repository's .context folder.",
     "",

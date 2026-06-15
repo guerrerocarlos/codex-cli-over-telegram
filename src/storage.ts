@@ -40,6 +40,38 @@ interface RunRow {
   error_message: string | null;
 }
 
+interface PendingContextFileRow {
+  id: number;
+  binding_id: number;
+  telegram_message_id: number | null;
+  kind: string;
+  relative_path: string;
+  original_name: string | null;
+  mime_type: string | null;
+  file_size: number;
+  created_at: string;
+}
+
+export interface PendingContextFileRecord {
+  id: number;
+  bindingId: number;
+  telegramMessageId: number | null;
+  kind: string;
+  relativePath: string;
+  originalName: string | null;
+  mimeType: string | null;
+  fileSize: number;
+  createdAt: string;
+}
+
+export interface PendingContextFileInput {
+  kind: string;
+  relativePath: string;
+  originalName: string | null;
+  mimeType: string | null;
+  fileSize: number;
+}
+
 function now(): string {
   return new Date().toISOString();
 }
@@ -88,6 +120,20 @@ function mapRun(row: RunRow): RunRecord {
     exitCode: row.exit_code,
     finalMessage: row.final_message,
     errorMessage: row.error_message,
+  };
+}
+
+function mapPendingContextFile(row: PendingContextFileRow): PendingContextFileRecord {
+  return {
+    id: row.id,
+    bindingId: row.binding_id,
+    telegramMessageId: row.telegram_message_id,
+    kind: row.kind,
+    relativePath: row.relative_path,
+    originalName: row.original_name,
+    mimeType: row.mime_type,
+    fileSize: row.file_size,
+    createdAt: row.created_at,
   };
 }
 
@@ -154,6 +200,18 @@ export class Storage {
         message_thread_id INTEGER,
         event_type TEXT NOT NULL,
         details_json TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS pending_context_files (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        binding_id INTEGER NOT NULL REFERENCES topic_bindings(id) ON DELETE CASCADE,
+        telegram_message_id INTEGER,
+        kind TEXT NOT NULL,
+        relative_path TEXT NOT NULL,
+        original_name TEXT,
+        mime_type TEXT,
+        file_size INTEGER NOT NULL,
+        created_at TEXT NOT NULL
       );
     `);
 
@@ -402,6 +460,59 @@ export class Storage {
 
   releaseLock(repoPath: string, runId: number): void {
     this.db.prepare("DELETE FROM repo_locks WHERE repo_path = ? AND run_id = ?").run(repoPath, runId);
+  }
+
+  addPendingContextFiles(
+    bindingId: number,
+    telegramMessageId: number | null,
+    files: PendingContextFileInput[],
+  ): void {
+    if (files.length === 0) {
+      return;
+    }
+
+    const timestamp = now();
+    const insert = this.db.prepare(
+      `
+      INSERT INTO pending_context_files (
+        binding_id, telegram_message_id, kind, relative_path, original_name, mime_type, file_size, created_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+    );
+    const tx = this.db.transaction(() => {
+      for (const file of files) {
+        insert.run(
+          bindingId,
+          telegramMessageId,
+          file.kind,
+          file.relativePath,
+          file.originalName,
+          file.mimeType,
+          file.fileSize,
+          timestamp,
+        );
+      }
+    });
+    tx();
+  }
+
+  listPendingContextFiles(bindingId: number): PendingContextFileRecord[] {
+    const rows = this.db
+      .prepare("SELECT * FROM pending_context_files WHERE binding_id = ? ORDER BY id ASC")
+      .all(bindingId) as PendingContextFileRow[];
+    return rows.map(mapPendingContextFile);
+  }
+
+  consumePendingContextFiles(bindingId: number): PendingContextFileRecord[] {
+    const tx = this.db.transaction(() => {
+      const files = this.listPendingContextFiles(bindingId);
+      if (files.length > 0) {
+        this.db.prepare("DELETE FROM pending_context_files WHERE binding_id = ?").run(bindingId);
+      }
+      return files;
+    });
+    return tx();
   }
 
   audit(input: {

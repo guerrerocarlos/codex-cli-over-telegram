@@ -91,7 +91,7 @@ From topic 0, use `/create <folder>` to create a new folder inside `ALLOWED_REPO
 
 The bot publishes its slash-command menu to Telegram on startup, so newly added commands may require a service restart before they appear in Telegram's `/` picker.
 
-Images, documents, audio, video, and other Telegram files are saved into the bound repository's `.context/` directory and then sent to Codex as local paths. If the upload has a caption, the caption is used as the instruction. A caption starting with `/ask` is also supported.
+Images, documents, audio, video, and other Telegram files are saved into the bound repository's `.context/` directory and sent to Codex as local paths only once there is text to act on. Uploads with captions start a run immediately and use the caption as the instruction. Uploads without captions are staged for the next text message or captioned upload in that topic. A caption starting with `/ask` is also supported.
 
 Voice messages are saved into `.context/`, converted with `ffmpeg` when Telegram sends an OpenAI-unsupported audio container, transcribed with the OpenAI API, saved as a `.transcript.txt` file, and then sent to Codex as the user's prompt. Set `OPENAI_API_KEY` before using voice transcription.
 
