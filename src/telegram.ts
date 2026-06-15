@@ -35,6 +35,7 @@ interface TopicRef {
 
 interface SendOptions {
   notify?: boolean;
+  replyToMessageId?: number | null;
 }
 
 interface TelegramFileLike {
@@ -986,6 +987,13 @@ function resumePromptForRun(run: InterruptedRunRecord): string {
   ].join("\n");
 }
 
+function terminalRunSendOptions(run: RunRecord): SendOptions {
+  return {
+    notify: true,
+    replyToMessageId: run.telegramMessageId,
+  };
+}
+
 async function executeRun(
   bot: Bot,
   config: AppConfig,
@@ -1011,7 +1019,7 @@ async function executeRun(
           ? `Repo is busy. Write lock is held by run #${lock.runId} since ${lock.acquiredAt}.`
           : "Repo is busy.";
         storage.failRun(run.id, message);
-        await sendText(bot, config, binding, message);
+        await sendText(bot, config, binding, message, terminalRunSendOptions(run));
         return;
       }
     }
@@ -1090,7 +1098,7 @@ async function executeRun(
           config,
           binding,
           `Run #${run.id} failed:\n${codeBlock(truncateText(event.error, 2500))}`,
-          { notify: true },
+          terminalRunSendOptions(run),
         );
         return;
       }
@@ -1107,13 +1115,14 @@ async function executeRun(
       config,
       binding,
       completionMessage === lastSentAgentMessage ? "Done." : completionMessage,
-      { notify: true },
+      terminalRunSendOptions(run),
     );
   } catch (error) {
     const message = errorMessage(error);
     storage.failRun(run.id, message);
     await sendText(bot, config, binding, `Run #${run.id} failed:\n${codeBlock(truncateText(message, 2500))}`, {
       notify: true,
+      replyToMessageId: run.telegramMessageId,
     });
   } finally {
     if (lockAcquired) {
@@ -1274,12 +1283,21 @@ async function sendText(
 ): Promise<void> {
   const chunks = markdownV2Chunks(text, config.maxTelegramMessageChars);
   for (const [index, chunk] of chunks.entries()) {
-    await sendQueueFor(config).sendMessage(bot.api, binding.chatId, chunk, {
+    const sendOptions = {
       message_thread_id: binding.messageThreadId,
       link_preview_options: { is_disabled: true },
       parse_mode: "MarkdownV2",
       disable_notification: !(options.notify === true && index === 0),
-    });
+      ...(options.replyToMessageId
+        ? {
+            reply_parameters: {
+              message_id: options.replyToMessageId,
+              allow_sending_without_reply: true,
+            },
+          }
+        : {}),
+    } as const;
+    await sendQueueFor(config).sendMessage(bot.api, binding.chatId, chunk, sendOptions);
   }
 }
 
