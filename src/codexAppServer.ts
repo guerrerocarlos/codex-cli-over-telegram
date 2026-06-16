@@ -60,9 +60,13 @@ export class CodexAppServerBackend implements CodexBackend {
     client.onServerRequest((serverRequest, rpcClient) => {
       events.push({
         type: "progress",
-        text: `Approval or input request declined: ${serverRequest.method}`,
+        text:
+          serverRequest.method === "mcpServer/elicitation/request" &&
+          (serverRequest.params as any)?.serverName === "telegram_manager"
+            ? "Telegram manager MCP elicitation accepted."
+            : `Approval or input request declined: ${serverRequest.method}`,
       });
-      this.declineServerRequest(serverRequest.method, serverRequest.id, rpcClient);
+      this.declineServerRequest(serverRequest.method, serverRequest.id, serverRequest.params, rpcClient);
     });
 
     const unsubscribe = client.onNotification((notification) => {
@@ -432,7 +436,7 @@ export class CodexAppServerBackend implements CodexBackend {
     return paths.length > 0 ? `Changed ${paths.join(", ")}` : "File changes completed.";
   }
 
-  private declineServerRequest(method: string, id: number | string, client: AppServerClient): void {
+  private declineServerRequest(method: string, id: number | string, params: any, client: AppServerClient): void {
     logger.info("declining app-server request", { method });
 
     if (method === "item/commandExecution/requestApproval") {
@@ -444,6 +448,11 @@ export class CodexAppServerBackend implements CodexBackend {
       return;
     }
     if (method === "mcpServer/elicitation/request") {
+      if (params?.serverName === "telegram_manager") {
+        logger.info("accepting telegram manager MCP elicitation", { serverName: params.serverName });
+        client.respond(id, { action: "accept", content: {}, _meta: null });
+        return;
+      }
       client.respond(id, { action: "decline", content: null, _meta: null });
       return;
     }
