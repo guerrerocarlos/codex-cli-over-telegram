@@ -1,7 +1,7 @@
 import "dotenv/config";
+import os from "node:os";
 import path from "node:path";
 import { mkdirSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import type { SandboxMode } from "./types.js";
 
 export type CodexBackendKind = "app-server" | "exec";
@@ -32,8 +32,6 @@ export interface AppConfig {
   deployedAt: string;
 }
 
-const appRootPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-
 function required(name: string): string {
   const value = process.env[name]?.trim();
   if (!value) {
@@ -45,6 +43,16 @@ function required(name: string): string {
 function optional(name: string, fallback: string): string {
   const value = process.env[name]?.trim();
   return value && value.length > 0 ? value : fallback;
+}
+
+function expandHome(input: string): string {
+  if (input === "~") {
+    return os.homedir();
+  }
+  if (input.startsWith("~/")) {
+    return path.join(os.homedir(), input.slice(2));
+  }
+  return input;
 }
 
 function parseNumberList(name: string): Set<number> {
@@ -121,7 +129,9 @@ function parseBoolean(name: string, fallback: boolean): boolean {
 
 export function loadConfig(): AppConfig {
   const databasePath = path.resolve(optional("DATABASE_PATH", "./data/state.sqlite"));
+  const managerRepoPath = path.resolve(expandHome(optional("MANAGER_REPO_PATH", "~/topic-zero")));
   mkdirSync(path.dirname(databasePath), { recursive: true });
+  mkdirSync(managerRepoPath, { recursive: true });
 
   return {
     telegramBotToken: required("TELEGRAM_BOT_TOKEN"),
@@ -143,7 +153,7 @@ export function loadConfig(): AppConfig {
     healthHost: optional("HEALTH_HOST", "127.0.0.1"),
     healthPort: parseInteger("HEALTH_PORT", 8787),
     allowUnthreadedChats: parseBoolean("ALLOW_UNTHREADED_CHATS", false),
-    managerRepoPath: path.resolve(optional("MANAGER_REPO_PATH", appRootPath)),
+    managerRepoPath,
     deployBranch: optional("DEPLOY_BRANCH", "unknown"),
     deployCommitHash: optional("DEPLOY_COMMIT_HASH", "unknown"),
     deployedAt: optional("DEPLOYED_AT", "unknown"),
