@@ -508,6 +508,11 @@ export function createTelegramBot(
       await reply(ctx, "Usage: /plan what you want the agent to plan", config);
       return;
     }
+    const requestedState = parsePlanToggle(text);
+    if (requestedState !== null) {
+      await setTopicPlanMode(ctx, config, storage, requestedState);
+      return;
+    }
     await handlePrompt(ctx, config, storage, codex, bot, queue, text, { planMode: true, forceQueue: true });
   });
 
@@ -2169,6 +2174,17 @@ function parseMode(input: string): SandboxMode | null {
 
 function formatPlanMode(planMode: boolean): string {
   return planMode ? "on" : "off";
+}
+
+function parsePlanToggle(input: string): boolean | null {
+  const normalized = input.trim().toLowerCase();
+  if (["on", "true", "yes", "1"].includes(normalized)) {
+    return true;
+  }
+  if (["off", "false", "no", "0"].includes(normalized)) {
+    return false;
+  }
+  return null;
 }
 
 function effectiveSandboxMode(config: AppConfig, sandboxMode: SandboxMode): SandboxMode {
