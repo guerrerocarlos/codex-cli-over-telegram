@@ -1,4 +1,8 @@
 #!/usr/bin/env node
+import Database from "better-sqlite3";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import readline from "node:readline";
 
 type JsonRpcId = number | string | null;
@@ -15,9 +19,11 @@ interface ToolCallArguments {
   limit?: unknown;
 }
 
-const bridgeUrl = process.env.MANAGER_BRIDGE_URL ?? "";
-const bridgeToken = process.env.MANAGER_BRIDGE_TOKEN ?? "";
-const managerChatId = Number(process.env.MANAGER_BRIDGE_CHAT_ID ?? "");
+interface BridgeConfig {
+  url: string;
+  token: string;
+  chatId: number;
+}
 
 const rl = readline.createInterface({
   input: process.stdin,
@@ -150,12 +156,13 @@ async function callTool(params: any): Promise<unknown> {
   }
 
   const args = (params.arguments ?? {}) as ToolCallArguments;
-  if (!bridgeUrl || !bridgeToken || !Number.isSafeInteger(managerChatId)) {
+  const bridgeConfig = resolveBridgeConfig();
+  if (!bridgeConfig) {
     throw new Error("Telegram bridge is not configured for this Codex run.");
   }
 
   const body: Record<string, unknown> = {
-    chatId: managerChatId,
+    chatId: bridgeConfig.chatId,
     action: toolName,
   };
 
@@ -180,10 +187,10 @@ async function callTool(params: any): Promise<unknown> {
     }
   }
 
-  const response = await fetch(bridgeUrl, {
+  const response = await fetch(bridgeConfig.url, {
     method: "POST",
     headers: {
-      authorization: `Bearer ${bridgeToken}`,
+      authorization: `Bearer ${bridgeConfig.token}`,
       "content-type": "application/json",
     },
     body: JSON.stringify(body),
@@ -210,4 +217,136 @@ function respond(id: JsonRpcId, result: unknown): void {
 
 function respondError(id: JsonRpcId, message: string, code = -32000): void {
   process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id, error: { code, message } })}\n`);
+}
+
+function resolveBridgeConfig(): BridgeConfig | null {
+  const env = { ...readEnvFile("/etc/codex-cli-over-telegram/env"), ...process.env };
+  const discoveredEnv = discoverRunningBridgeEnv();
+  const url = env.MANAGER_BRIDGE_URL ?? discoveredEnv.MANAGER_BRIDGE_URL ?? defaultBridgeUrl(env);
+  const token = env.MANAGER_BRIDGE_TOKEN ?? discoveredEnv.MANAGER_BRIDGE_TOKEN;
+  const chatId = parseChatId(env.MANAGER_BRIDGE_CHAT_ID ?? discoveredEnv.MANAGER_BRIDGE_CHAT_ID) ?? inferChatId(env);
+
+  if (!url || !token || chatId === null) {
+    return null;
+  }
+
+  return { url, token, chatId };
+}
+
+function parseChatId(value: string | undefined): number | null {
+  if (!value) {
+    return null;
+  }
+  const chatId = Number(value);
+  return Number.isSafeInteger(chatId) ? chatId : null;
+}
+
+function defaultBridgeUrl(env: NodeJS.ProcessEnv): string {
+  const host = env.HEALTH_HOST && env.HEALTH_HOST !== "0.0.0.0" ? env.HEALTH_HOST : "127.0.0.1";
+  const port = env.HEALTH_PORT ?? "8787";
+  return `http://${host}:${port}/bridge`;
+}
+
+function readEnvFile(filePath: string): NodeJS.ProcessEnv {
+  if (!existsSync(filePath)) {
+    return {};
+  }
+
+  const values: NodeJS.ProcessEnv = {};
+  for (const line of readFileSync(filePath, "utf8").split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) {
+      continue;
+    }
+    const separator = trimmed.indexOf("=");
+    if (separator <= 0) {
+      continue;
+    }
+    const key = trimmed.slice(0, separator).trim();
+    const value = trimmed.slice(separator + 1).trim();
+    values[key] = unquoteEnvValue(value);
+  }
+  return values;
+}
+
+function unquoteEnvValue(value: string): string {
+  if (
+    (value.startsWith('"') && value.endsWith('"')) ||
+    (value.startsWith("'") && value.endsWith("'"))
+  ) {
+    return value.slice(1, -1);
+  }
+  return value;
+}
+
+function discoverRunningBridgeEnv(): NodeJS.ProcessEnv {
+  for (const pid of readdirSync("/proc")) {
+    if (!/^\d+$/.test(pid) || Number(pid) === process.pid) {
+      continue;
+    }
+    const environPath = `/proc/${pid}/environ`;
+    try {
+      const env = parseProcessEnv(readFileSync(environPath));
+      if (env.MANAGER_BRIDGE_URL && env.MANAGER_BRIDGE_TOKEN) {
+        return env;
+      }
+    } catch {
+      // Ignore processes whose environment is not readable by this user.
+    }
+  }
+  return {};
+}
+
+function parseProcessEnv(buffer: Buffer): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const entry of buffer.toString("utf8").split("\0")) {
+    const separator = entry.indexOf("=");
+    if (separator <= 0) {
+      continue;
+    }
+    env[entry.slice(0, separator)] = entry.slice(separator + 1);
+  }
+  return env;
+}
+
+function inferChatId(env: NodeJS.ProcessEnv): number | null {
+  const configuredDatabasePath = expandHome(env.DATABASE_PATH ?? "data/state.sqlite");
+  const databasePath = path.isAbsolute(configuredDatabasePath)
+    ? configuredDatabasePath
+    : path.resolve("/home/gnu/codex-cli-over-telegram", configuredDatabasePath);
+  if (!existsSync(databasePath)) {
+    return null;
+  }
+
+  let database: Database.Database | null = null;
+  try {
+    database = new Database(databasePath, { readonly: true, fileMustExist: true });
+    const currentPath = path.resolve(process.cwd());
+    const bindings = database
+      .prepare("SELECT chat_id AS chatId, repo_path AS repoPath FROM topic_bindings")
+      .all() as Array<{ chatId: number; repoPath: string }>;
+    const binding = bindings
+      .filter((candidate) => pathContains(path.resolve(candidate.repoPath), currentPath))
+      .sort((left, right) => right.repoPath.length - left.repoPath.length)[0];
+    return binding?.chatId ?? null;
+  } catch {
+    return null;
+  } finally {
+    database?.close();
+  }
+}
+
+function expandHome(input: string): string {
+  if (input === "~") {
+    return os.homedir();
+  }
+  if (input.startsWith("~/")) {
+    return path.join(os.homedir(), input.slice(2));
+  }
+  return input;
+}
+
+function pathContains(parent: string, child: string): boolean {
+  const relative = path.relative(parent, child);
+  return relative === "" || (!!relative && !relative.startsWith("..") && !path.isAbsolute(relative));
 }
