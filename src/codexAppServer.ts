@@ -233,12 +233,12 @@ export class CodexAppServerBackend implements CodexBackend {
 
   private appServerOptions(request?: CodexRunRequest): { extraArgs: string[]; extraEnv: NodeJS.ProcessEnv } {
     const bridgeHost = this.config.healthHost === "0.0.0.0" ? "127.0.0.1" : this.config.healthHost;
-    const bridgeUrl = `http://${bridgeHost}:${this.config.healthPort}/manager/queue-topic`;
+    const bridgeUrl = `http://${bridgeHost}:${this.config.healthPort}/bridge`;
     const bridgeEnv: NodeJS.ProcessEnv = {
       MANAGER_BRIDGE_URL: bridgeUrl,
       MANAGER_BRIDGE_TOKEN: this.config.managerBridgeToken,
     };
-    if (request?.messageThreadId === 0) {
+    if (request) {
       bridgeEnv.MANAGER_BRIDGE_CHAT_ID = String(request.chatId);
     }
     return {

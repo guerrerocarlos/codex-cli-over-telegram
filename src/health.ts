@@ -2,13 +2,17 @@ import http from "node:http";
 import type { AppConfig } from "./config.js";
 import { logger } from "./logger.js";
 
-export interface ManagerBridgeRequest {
+export type BridgeAction = "queue_topic" | "list_topics" | "read_topic_messages" | "create_topic";
+
+export interface BridgeRequest {
+  action: BridgeAction;
   chatId: number;
-  selector: string;
-  prompt: string;
+  selector?: string;
+  prompt?: string;
+  limit?: number;
 }
 
-export interface ManagerBridgeResult {
+export interface BridgeResult {
   ok: boolean;
   message: string;
   runId?: number;
@@ -16,11 +20,13 @@ export interface ManagerBridgeResult {
   topicName?: string;
   repoPath?: string;
   queuedBehind?: number;
+  topics?: unknown[];
+  messages?: unknown[];
 }
 
-export type ManagerBridgeHandler = (request: ManagerBridgeRequest) => Promise<ManagerBridgeResult>;
+export type BridgeHandler = (request: BridgeRequest) => Promise<BridgeResult>;
 
-export function startHealthServer(config: AppConfig, managerBridgeHandler?: ManagerBridgeHandler): http.Server {
+export function startHealthServer(config: AppConfig, bridgeHandler?: BridgeHandler): http.Server {
   const server = http.createServer((request, response) => {
     if (request.method === "GET" && request.url === "/health") {
       response.writeHead(200, { "content-type": "application/json" });
@@ -36,8 +42,12 @@ export function startHealthServer(config: AppConfig, managerBridgeHandler?: Mana
       return;
     }
 
-    if (request.method === "POST" && request.url === "/manager/queue-topic" && managerBridgeHandler) {
-      void handleManagerBridgeRequest(config, managerBridgeHandler, request, response);
+    if (
+      request.method === "POST" &&
+      (request.url === "/bridge" || request.url === "/manager/queue-topic") &&
+      bridgeHandler
+    ) {
+      void handleBridgeRequest(config, bridgeHandler, request, response);
       return;
     }
 
@@ -55,9 +65,9 @@ export function startHealthServer(config: AppConfig, managerBridgeHandler?: Mana
   return server;
 }
 
-async function handleManagerBridgeRequest(
+async function handleBridgeRequest(
   config: AppConfig,
-  handler: ManagerBridgeHandler,
+  handler: BridgeHandler,
   request: http.IncomingMessage,
   response: http.ServerResponse,
 ): Promise<void> {
@@ -69,17 +79,18 @@ async function handleManagerBridgeRequest(
     }
 
     const body = await readJsonBody(request);
-    if (!isManagerBridgeRequest(body)) {
+    const bridgeRequest = normalizeBridgeRequest(request.url ?? "", body);
+    if (!bridgeRequest) {
       response.writeHead(400, { "content-type": "application/json" });
       response.end(JSON.stringify({ ok: false, error: "invalid request" }));
       return;
     }
 
-    const result = await handler(body);
+    const result = await handler(bridgeRequest);
     response.writeHead(result.ok ? 200 : 400, { "content-type": "application/json" });
     response.end(JSON.stringify(result));
   } catch (error) {
-    logger.warn("manager bridge request failed", {
+    logger.warn("telegram bridge request failed", {
       error: error instanceof Error ? error.message : String(error),
     });
     response.writeHead(500, { "content-type": "application/json" });
@@ -103,17 +114,45 @@ async function readJsonBody(request: http.IncomingMessage): Promise<unknown> {
   return JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown;
 }
 
-function isManagerBridgeRequest(value: unknown): value is ManagerBridgeRequest {
+function normalizeBridgeRequest(url: string, value: unknown): BridgeRequest | null {
   if (!value || typeof value !== "object") {
-    return false;
+    return null;
   }
   const record = value as Record<string, unknown>;
-  return (
-    typeof record.chatId === "number" &&
-    Number.isSafeInteger(record.chatId) &&
-    typeof record.selector === "string" &&
-    record.selector.trim().length > 0 &&
-    typeof record.prompt === "string" &&
-    record.prompt.trim().length > 0
-  );
+  const chatId = record.chatId;
+  if (typeof chatId !== "number" || !Number.isSafeInteger(chatId)) {
+    return null;
+  }
+
+  if (url === "/manager/queue-topic") {
+    if (typeof record.selector !== "string" || typeof record.prompt !== "string") {
+      return null;
+    }
+    return {
+      action: "queue_topic",
+      chatId,
+      selector: record.selector,
+      prompt: record.prompt,
+    };
+  }
+
+  const action = record.action;
+  if (action !== "queue_topic" && action !== "list_topics" && action !== "read_topic_messages" && action !== "create_topic") {
+    return null;
+  }
+
+  const bridgeRequest: BridgeRequest = {
+    action,
+    chatId,
+  };
+  if (typeof record.selector === "string") {
+    bridgeRequest.selector = record.selector;
+  }
+  if (typeof record.prompt === "string") {
+    bridgeRequest.prompt = record.prompt;
+  }
+  if (typeof record.limit === "number" && Number.isFinite(record.limit)) {
+    bridgeRequest.limit = record.limit;
+  }
+  return bridgeRequest;
 }

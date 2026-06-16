@@ -64,6 +64,18 @@ interface ManagerEventRow {
   created_at: string;
 }
 
+interface TopicMessageRow {
+  id: number;
+  chat_id: number;
+  message_thread_id: number;
+  telegram_message_id: number | null;
+  direction: "in" | "out";
+  author_id: number | null;
+  author_name: string | null;
+  text: string;
+  created_at: string;
+}
+
 export interface PendingContextFileRecord {
   id: number;
   bindingId: number;
@@ -88,12 +100,34 @@ export interface ManagerEventRecord {
   createdAt: string;
 }
 
+export interface TopicMessageRecord {
+  id: number;
+  chatId: number;
+  messageThreadId: number;
+  telegramMessageId: number | null;
+  direction: "in" | "out";
+  authorId: number | null;
+  authorName: string | null;
+  text: string;
+  createdAt: string;
+}
+
 export interface PendingContextFileInput {
   kind: string;
   relativePath: string;
   originalName: string | null;
   mimeType: string | null;
   fileSize: number;
+}
+
+export interface TopicMessageInput {
+  chatId: number;
+  messageThreadId: number;
+  telegramMessageId: number | null;
+  direction: "in" | "out";
+  authorId: number | null;
+  authorName: string | null;
+  text: string;
 }
 
 export interface ManagerEventInput {
@@ -167,6 +201,20 @@ function mapPendingContextFile(row: PendingContextFileRow): PendingContextFileRe
     originalName: row.original_name,
     mimeType: row.mime_type,
     fileSize: row.file_size,
+    createdAt: row.created_at,
+  };
+}
+
+function mapTopicMessage(row: TopicMessageRow): TopicMessageRecord {
+  return {
+    id: row.id,
+    chatId: row.chat_id,
+    messageThreadId: row.message_thread_id,
+    telegramMessageId: row.telegram_message_id,
+    direction: row.direction,
+    authorId: row.author_id,
+    authorName: row.author_name,
+    text: row.text,
     createdAt: row.created_at,
   };
 }
@@ -282,6 +330,21 @@ export class Storage {
         details_json TEXT NOT NULL,
         created_at TEXT NOT NULL
       );
+
+      CREATE TABLE IF NOT EXISTS topic_messages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        chat_id INTEGER NOT NULL,
+        message_thread_id INTEGER NOT NULL,
+        telegram_message_id INTEGER,
+        direction TEXT NOT NULL,
+        author_id INTEGER,
+        author_name TEXT,
+        text TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS topic_messages_topic_idx
+        ON topic_messages (chat_id, message_thread_id, id);
     `);
 
     this.addColumnIfMissing("topic_bindings", "model", "TEXT");
@@ -666,6 +729,47 @@ export class Storage {
       .prepare("SELECT * FROM manager_events WHERE chat_id = ? ORDER BY id DESC LIMIT ?")
       .all(chatId, limit) as ManagerEventRow[];
     return rows.map(mapManagerEvent);
+  }
+
+  addTopicMessage(input: TopicMessageInput): void {
+    if (!input.text.trim()) {
+      return;
+    }
+
+    this.db
+      .prepare(
+        `
+        INSERT INTO topic_messages (
+          chat_id, message_thread_id, telegram_message_id, direction, author_id, author_name, text, created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      )
+      .run(
+        input.chatId,
+        input.messageThreadId,
+        input.telegramMessageId,
+        input.direction,
+        input.authorId,
+        input.authorName,
+        input.text,
+        now(),
+      );
+  }
+
+  listTopicMessages(chatId: number, messageThreadId: number, limit: number): TopicMessageRecord[] {
+    const boundedLimit = Math.max(1, Math.min(200, Math.trunc(limit)));
+    const rows = this.db
+      .prepare(
+        `
+        SELECT * FROM topic_messages
+        WHERE chat_id = ? AND message_thread_id = ?
+        ORDER BY id DESC
+        LIMIT ?
+      `,
+      )
+      .all(chatId, messageThreadId, boundedLimit) as TopicMessageRow[];
+    return rows.reverse().map(mapTopicMessage);
   }
 
   audit(input: {

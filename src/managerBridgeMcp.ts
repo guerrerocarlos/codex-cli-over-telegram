@@ -12,6 +12,7 @@ interface JsonRpcRequest {
 interface ToolCallArguments {
   topic?: unknown;
   prompt?: unknown;
+  limit?: unknown;
 }
 
 const bridgeUrl = process.env.MANAGER_BRIDGE_URL ?? "";
@@ -56,7 +57,7 @@ async function handleLine(line: string): Promise<void> {
             version: "0.1.0",
           },
           instructions:
-            "Use queue_topic when the user asks the topic-zero manager to assign or queue work to a managed Telegram worker topic. Prefer exact topic ids when available.",
+            "Use these tools to inspect bound Telegram topics, read stored topic messages, and queue work into specific topics. Prefer exact topic ids when available.",
         });
         return;
       case "tools/list":
@@ -65,7 +66,7 @@ async function handleLine(line: string): Promise<void> {
             {
               name: "queue_topic",
               description:
-                "Queue a prompt for a managed Telegram worker topic from topic zero. Use this instead of telling the user to run /queue_topic or /assign.",
+                "Queue a prompt for a bound Telegram topic. Use this instead of telling the user to run /queue_topic or /assign.",
               inputSchema: {
                 type: "object",
                 properties: {
@@ -79,6 +80,51 @@ async function handleLine(line: string): Promise<void> {
                   },
                 },
                 required: ["topic", "prompt"],
+                additionalProperties: false,
+              },
+            },
+            {
+              name: "list_topics",
+              description: "List bound Telegram topics in this chat, including their topic ids, names, repos, and run status.",
+              inputSchema: {
+                type: "object",
+                properties: {},
+                additionalProperties: false,
+              },
+            },
+            {
+              name: "read_topic_messages",
+              description:
+                "Read recently stored messages for a bound Telegram topic. Only messages observed after message storage was enabled are available.",
+              inputSchema: {
+                type: "object",
+                properties: {
+                  topic: {
+                    type: "string",
+                    description: "Topic id, topic name, or repo folder name.",
+                  },
+                  limit: {
+                    type: "number",
+                    description: "Maximum messages to return, up to 200. Defaults to 25.",
+                  },
+                },
+                required: ["topic"],
+                additionalProperties: false,
+              },
+            },
+            {
+              name: "create_topic",
+              description:
+                "Create a new Telegram forum topic, create or reuse a folder under the allowed repo roots, and bind the topic to that folder.",
+              inputSchema: {
+                type: "object",
+                properties: {
+                  topic: {
+                    type: "string",
+                    description: "Folder name or allowed folder path. The topic name is derived from the folder.",
+                  },
+                },
+                required: ["topic"],
                 additionalProperties: false,
               },
             },
@@ -98,19 +144,40 @@ async function handleLine(line: string): Promise<void> {
 }
 
 async function callTool(params: any): Promise<unknown> {
-  if (params?.name !== "queue_topic") {
+  const toolName = params?.name;
+  if (toolName !== "queue_topic" && toolName !== "list_topics" && toolName !== "read_topic_messages" && toolName !== "create_topic") {
     throw new Error(`Unknown tool: ${params?.name ?? "missing"}`);
   }
 
   const args = (params.arguments ?? {}) as ToolCallArguments;
-  const topic = typeof args.topic === "string" ? args.topic.trim() : "";
-  const prompt = typeof args.prompt === "string" ? args.prompt.trim() : "";
-
-  if (!topic || !prompt) {
-    throw new Error("queue_topic requires non-empty topic and prompt arguments.");
-  }
   if (!bridgeUrl || !bridgeToken || !Number.isSafeInteger(managerChatId)) {
-    throw new Error("Telegram manager bridge is not configured for this Codex run.");
+    throw new Error("Telegram bridge is not configured for this Codex run.");
+  }
+
+  const body: Record<string, unknown> = {
+    chatId: managerChatId,
+    action: toolName,
+  };
+
+  if (toolName === "queue_topic") {
+    const topic = typeof args.topic === "string" ? args.topic.trim() : "";
+    const prompt = typeof args.prompt === "string" ? args.prompt.trim() : "";
+    if (!topic || !prompt) {
+      throw new Error("queue_topic requires non-empty topic and prompt arguments.");
+    }
+    body.selector = topic;
+    body.prompt = prompt;
+  }
+
+  if (toolName === "read_topic_messages" || toolName === "create_topic") {
+    const topic = typeof args.topic === "string" ? args.topic.trim() : "";
+    if (!topic) {
+      throw new Error(`${toolName} requires a non-empty topic argument.`);
+    }
+    body.selector = topic;
+    if (toolName === "read_topic_messages" && typeof args.limit === "number" && Number.isFinite(args.limit)) {
+      body.limit = args.limit;
+    }
   }
 
   const response = await fetch(bridgeUrl, {
@@ -119,11 +186,7 @@ async function callTool(params: any): Promise<unknown> {
       authorization: `Bearer ${bridgeToken}`,
       "content-type": "application/json",
     },
-    body: JSON.stringify({
-      chatId: managerChatId,
-      selector: topic,
-      prompt,
-    }),
+    body: JSON.stringify(body),
   });
 
   const result = (await response.json()) as { ok?: boolean; message?: string };
@@ -135,7 +198,7 @@ async function callTool(params: any): Promise<unknown> {
     content: [
       {
         type: "text",
-        text: result.message ?? "Queued topic run.",
+        text: JSON.stringify(result, null, 2),
       },
     ],
   };

@@ -4,7 +4,7 @@ import { Storage } from "./storage.js";
 import { CodexAppServerBackend } from "./codexAppServer.js";
 import { CodexExecBackend } from "./codexExec.js";
 import { RunQueue } from "./runQueue.js";
-import { createTelegramBot, queueManagerTopicRun, telegramCommandMenu } from "./telegram.js";
+import { createTelegramBot, handleTelegramBridgeRequest, telegramCommandMenu } from "./telegram.js";
 import { startHealthServer } from "./health.js";
 import { logger } from "./logger.js";
 
@@ -18,16 +18,13 @@ async function main(): Promise<void> {
       ? new CodexAppServerBackend(config)
       : new CodexExecBackend(config.codexBin);
   const healthServer = startHealthServer(config, async (request) =>
-    queueManagerTopicRun({
+    handleTelegramBridgeRequest({
       storage,
       bot,
       config,
       codex,
       queue,
-      managerTopic: { chatId: request.chatId, messageThreadId: 0 },
-      telegramUserId: null,
-      input: `${request.selector} ${request.prompt}`,
-      replyToMessageId: null,
+      request,
     }),
   );
   const bot = createTelegramBot(config, storage, codex, { recoverRuns: interruptedRuns, queue });

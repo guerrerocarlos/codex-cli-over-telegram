@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { Bot, InlineKeyboard, InputFile, type Context } from "grammy";
 import type { AppConfig } from "./config.js";
+import type { BridgeRequest, BridgeResult } from "./health.js";
 import type {
   CodexBackend,
   CodexRunEvent,
@@ -223,11 +224,7 @@ export function createTelegramBot(
   bot.command("create", async (ctx) => {
     const topic = getTopicRef(ctx, config);
     if (!topic) {
-      await reply(ctx, "Use /create from topic 0. Enable ALLOW_UNTHREADED_CHATS for the general topic.", config);
-      return;
-    }
-    if (topic.messageThreadId !== 0) {
-      await reply(ctx, "Use /create only from topic 0 so new workspaces are created from one place.", config);
+      await reply(ctx, "Use /create inside a Telegram forum topic, or enable ALLOW_UNTHREADED_CHATS.", config);
       return;
     }
 
@@ -583,8 +580,9 @@ export function createTelegramBot(
   });
 
   bot.command("dashboard", async (ctx) => {
-    const topic = await requireTopicZero(ctx, config);
+    const topic = getTopicRef(ctx, config);
     if (!topic) {
+      await reply(ctx, "Use this inside a Telegram forum topic, or enable ALLOW_UNTHREADED_CHATS.", config);
       return;
     }
     storage.audit({
@@ -598,16 +596,18 @@ export function createTelegramBot(
   });
 
   bot.command("topics", async (ctx) => {
-    const topic = await requireTopicZero(ctx, config);
+    const topic = getTopicRef(ctx, config);
     if (!topic) {
+      await reply(ctx, "Use this inside a Telegram forum topic, or enable ALLOW_UNTHREADED_CHATS.", config);
       return;
     }
     await reply(ctx, managerTopicsText(storage, topic.chatId), config);
   });
 
   bot.command("todo", async (ctx) => {
-    const topic = await requireTopicZero(ctx, config);
+    const topic = getTopicRef(ctx, config);
     if (!topic) {
+      await reply(ctx, "Use this inside a Telegram forum topic, or enable ALLOW_UNTHREADED_CHATS.", config);
       return;
     }
     await reply(ctx, managerTodoText(storage, topic.chatId), config);
@@ -770,10 +770,6 @@ export function createTelegramBot(
       await reply(ctx, "Usage: /ask what you want Codex to do", config);
       return;
     }
-    if (isTopicZero(ctx, config)) {
-      await handleManagerPrompt(ctx, config, storage, codex, bot, queue, text);
-      return;
-    }
     await handlePrompt(ctx, config, storage, codex, bot, queue, text);
   });
 
@@ -781,10 +777,6 @@ export function createTelegramBot(
     const text = ctx.match.trim();
     if (!text) {
       await reply(ctx, "Usage: /queue what Codex should do after the current run", config);
-      return;
-    }
-    if (isTopicZero(ctx, config)) {
-      await handleManagerPrompt(ctx, config, storage, codex, bot, queue, text, { forceQueue: true });
       return;
     }
     await handlePrompt(ctx, config, storage, codex, bot, queue, text, { forceQueue: true });
@@ -799,25 +791,8 @@ export function createTelegramBot(
     if (!text) {
       return;
     }
-    if (isTopicZero(ctx, config)) {
-      const queueTopicAlias = parseQueueTopicAlias(text);
-      if (queueTopicAlias !== null) {
-        await handleManagerQueueTopicCommand(ctx, config, storage, codex, bot, queue, queueTopicAlias);
-        return;
-      }
-    }
-    if (isTopicZero(ctx, config)) {
-      const queueTopicCommand = parseEmbeddedManagerQueueCommand(text);
-      if (queueTopicCommand !== null) {
-        await handleManagerQueueTopicCommand(ctx, config, storage, codex, bot, queue, queueTopicCommand);
-        return;
-      }
-    }
+    recordIncomingMessage(ctx, config, storage, text);
     if (text.startsWith("/")) {
-      return;
-    }
-    if (isTopicZero(ctx, config)) {
-      await handleManagerPrompt(ctx, config, storage, codex, bot, queue, text);
       return;
     }
     await handlePrompt(ctx, config, storage, codex, bot, queue, text);
@@ -996,34 +971,6 @@ async function handleVoiceMessage(
   }
 }
 
-async function handleManagerPrompt(
-  ctx: Context,
-  config: AppConfig,
-  storage: Storage,
-  codex: CodexBackend,
-  bot: Bot,
-  queue: RunQueue,
-  text: string,
-  options: HandlePromptOptions = {},
-): Promise<void> {
-  const topic = await requireTopicZero(ctx, config);
-  if (!topic) {
-    return;
-  }
-
-  ensureManagerBinding(ctx, config, storage, topic);
-  await handlePrompt(
-    ctx,
-    config,
-    storage,
-    codex,
-    bot,
-    queue,
-    managerPromptText(storage, topic.chatId, text),
-    options,
-  );
-}
-
 async function handleManagerQueueTopicCommand(
   ctx: Context,
   config: AppConfig,
@@ -1033,8 +980,9 @@ async function handleManagerQueueTopicCommand(
   queue: RunQueue,
   input: string,
 ): Promise<void> {
-  const topic = await requireTopicZero(ctx, config);
+  const topic = getTopicRef(ctx, config);
   if (!topic) {
+    await reply(ctx, "Use this inside a Telegram forum topic, or enable ALLOW_UNTHREADED_CHATS.", config);
     return;
   }
 
@@ -1097,25 +1045,6 @@ export async function queueManagerTopicRun(input: QueueManagerTopicRunInput): Pr
   const key = topicKey(binding.chatId, binding.messageThreadId);
   const queuedBehind = queue.depth(key);
   let run = storage.createRun(binding.id, null, request.prompt);
-  storage.addManagerEvent({
-    chatId: binding.chatId,
-    sourceMessageThreadId: binding.messageThreadId,
-    bindingId: binding.id,
-    runId: run.id,
-    eventType: "run_queued",
-    summary: managerEventSummary(
-      binding,
-      run,
-      "queued",
-      `Queued from topic zero${queuedBehind > 0 ? ` behind ${queuedBehind} active/queued run(s)` : ""}.`,
-    ),
-    details: {
-      topicName: topicDisplayName(binding),
-      repoPath: binding.repoPath,
-      prompt: run.prompt,
-      queuedBehind,
-    },
-  });
   storage.audit({
     telegramUserId,
     chatId: managerTopic.chatId,
@@ -1168,6 +1097,121 @@ export async function queueManagerTopicRun(input: QueueManagerTopicRunInput): Pr
     repoPath: binding.repoPath,
     queuedBehind,
   };
+}
+
+export async function handleTelegramBridgeRequest(input: {
+  storage: Storage;
+  bot: Bot;
+  config: AppConfig;
+  codex: CodexBackend;
+  queue: RunQueue;
+  request: BridgeRequest;
+}): Promise<BridgeResult> {
+  const { storage, bot, config, codex, queue, request } = input;
+
+  if (request.action === "list_topics") {
+    const topics = storage.listBindingsForChat(request.chatId).map((binding) => {
+      const active = storage.getActiveRun(binding.id);
+      const latest = storage.getLatestRun(binding.id);
+      return {
+        topicId: binding.messageThreadId,
+        topicName: topicDisplayName(binding),
+        repoPath: binding.repoPath,
+        status: binding.status,
+        activeRunId: active?.id ?? null,
+        latestRunId: latest?.id ?? null,
+        latestRunStatus: latest?.status ?? null,
+      };
+    });
+    return {
+      ok: true,
+      message: topics.length > 0 ? `Found ${topics.length} bound topic(s).` : "No bound topics found.",
+      topics,
+    };
+  }
+
+  if (request.action === "read_topic_messages") {
+    const selector = request.selector?.trim() ?? "";
+    if (!selector) {
+      return { ok: false, message: "read_topic_messages requires a topic selector." };
+    }
+    const binding = findManagerTargetBinding(storage, request.chatId, selector);
+    if (!binding) {
+      return { ok: false, message: `Could not find topic: ${selector}` };
+    }
+
+    const messages = storage.listTopicMessages(request.chatId, binding.messageThreadId, request.limit ?? 25);
+    return {
+      ok: true,
+      message:
+        messages.length > 0
+          ? `Found ${messages.length} stored message(s) for ${topicDisplayName(binding)}.`
+          : `No stored messages for ${topicDisplayName(binding)} yet. Only messages observed after this feature was deployed are available.`,
+      topicId: binding.messageThreadId,
+      topicName: topicDisplayName(binding),
+      repoPath: binding.repoPath,
+      messages,
+    };
+  }
+
+  if (request.action === "create_topic") {
+    const requestedFolder = request.selector?.trim() ?? "";
+    if (!requestedFolder) {
+      return { ok: false, message: "create_topic requires a folder name or path." };
+    }
+
+    try {
+      const repoPath = resolveNewWorkspacePath(requestedFolder, config.allowedRepoRoots);
+      const topicName = topicNameForPath(repoPath);
+      const directoryState = await ensureWorkspaceDirectory(repoPath);
+      const createdTopic = await bot.api.createForumTopic(request.chatId, topicName);
+      const binding = storage.upsertBinding({
+        chatId: request.chatId,
+        messageThreadId: createdTopic.message_thread_id,
+        topicName,
+        repoPath,
+        createdByUserId: 0,
+        sandboxMode: effectiveSandboxMode(config, config.defaultSandboxMode),
+      });
+      storage.audit({
+        telegramUserId: null,
+        chatId: request.chatId,
+        messageThreadId: createdTopic.message_thread_id,
+        eventType: "bridge_create_topic",
+        details: { repoPath, topicName, directoryState },
+      });
+      await sendText(bot, config, binding, [`Created topic for:`, codeBlock(repoPath)].join("\n"), {
+        notify: false,
+      });
+      return {
+        ok: true,
+        message: `${directoryState === "existed" ? "Reused existing folder and c" : "C"}reated topic ${topicName} (#${createdTopic.message_thread_id}).`,
+        topicId: createdTopic.message_thread_id,
+        topicName,
+        repoPath,
+      };
+    } catch (error) {
+      return { ok: false, message: errorMessage(error) };
+    }
+  }
+
+  const selector = request.selector?.trim() ?? "";
+  const prompt = request.prompt?.trim() ?? "";
+  if (!selector || !prompt) {
+    return { ok: false, message: "queue_topic requires topic and prompt." };
+  }
+
+  return queueManagerTopicRun({
+    storage,
+    bot,
+    config,
+    codex,
+    queue,
+    managerTopic: { chatId: request.chatId, messageThreadId: 0 },
+    telegramUserId: null,
+    input: `${selector} ${prompt}`,
+    replyToMessageId: null,
+  });
 }
 
 interface ManagerQueueTopicRequest {
@@ -1243,7 +1287,7 @@ function parseEmbeddedManagerQueueCommand(text: string): string | null {
 }
 
 function findManagerTargetBinding(storage: Storage, chatId: number, selector: string): TopicBinding | null {
-  const bindings = storage.listBindingsForChat(chatId).filter((binding) => binding.messageThreadId !== 0);
+  const bindings = storage.listBindingsForChat(chatId);
   if (bindings.length === 0) {
     return null;
   }
@@ -1282,7 +1326,7 @@ function findManagerTargetBinding(storage: Storage, chatId: number, selector: st
 }
 
 function managerTopicSelectorList(storage: Storage, chatId: number): string {
-  const bindings = storage.listBindingsForChat(chatId).filter((binding) => binding.messageThreadId !== 0);
+  const bindings = storage.listBindingsForChat(chatId);
   if (bindings.length === 0) {
     return "No worker topics are currently bound.";
   }
@@ -1342,7 +1386,6 @@ async function handlePrompt(
 
   if (queuedBehind > 0) {
     await reply(ctx, `Queued run #${run.id} behind ${queuedBehind} active/queued run(s).`, config);
-    await sendManagerRunReport(storage, bot, config, binding, run, "queued", `Queued behind ${queuedBehind} active/queued run(s).`);
   } else {
     await reply(
       ctx,
@@ -1472,7 +1515,6 @@ async function executeRun(
           : "Repo is busy.";
         storage.failRun(run.id, message);
         await sendText(bot, config, binding, message, terminalRunSendOptions(run));
-        await sendManagerRunReport(storage, bot, config, binding, run, "failed", message);
         return;
       }
     }
@@ -1487,7 +1529,6 @@ async function executeRun(
       eventType: "run_started",
       details: { runId: run.id, repoPath: binding.repoPath, sandboxMode },
     });
-    await sendManagerRunReport(storage, bot, config, binding, run, "started", `Repo:\n${binding.repoPath}`);
 
     for await (const event of codex.run({
       bindingId: binding.id,
@@ -1556,7 +1597,6 @@ async function executeRun(
           `Run #${run.id} failed:\n${codeBlock(truncateText(event.error, 2500))}`,
           terminalRunSendOptions(run),
         );
-        await sendManagerRunReport(storage, bot, config, binding, run, "failed", truncateText(event.error, 1200));
         return;
       }
 
@@ -1574,7 +1614,6 @@ async function executeRun(
       completionMessage === lastSentAgentMessage ? "Done." : completionMessage,
       terminalRunSendOptions(run),
     );
-    await sendManagerRunReport(storage, bot, config, binding, run, "completed", truncateText(completionMessage, 1200));
   } catch (error) {
     const message = errorMessage(error);
     storage.failRun(run.id, message);
@@ -1582,7 +1621,6 @@ async function executeRun(
       notify: true,
       replyToMessageId: run.telegramMessageId,
     });
-    await sendManagerRunReport(storage, bot, config, binding, run, "failed", truncateText(message, 1200));
   } finally {
     if (lockAcquired) {
       storage.releaseLock(binding.repoPath, run.id);
@@ -1609,10 +1647,6 @@ function getTopicRef(ctx: Context, config: AppConfig): TopicRef | null {
   return null;
 }
 
-function isTopicZero(ctx: Context, config: AppConfig): boolean {
-  return getTopicRef(ctx, config)?.messageThreadId === 0;
-}
-
 async function requireBinding(
   ctx: Context,
   config: AppConfig,
@@ -1633,72 +1667,26 @@ async function requireBinding(
   return binding;
 }
 
-async function requireTopicZero(ctx: Context, config: AppConfig): Promise<TopicRef | null> {
-  const topic = getTopicRef(ctx, config);
-  if (!topic) {
-    await reply(ctx, "Use this inside topic zero, or enable ALLOW_UNTHREADED_CHATS for the general topic.", config);
-    return null;
-  }
-
-  if (topic.messageThreadId !== 0) {
-    await reply(ctx, "Use this manager command from topic zero.", config);
-    return null;
-  }
-
-  return topic;
-}
-
-function ensureManagerBinding(
+function recordIncomingMessage(
   ctx: Context,
   config: AppConfig,
   storage: Storage,
-  topic: TopicRef,
-): TopicBinding {
-  const existing = storage.getBinding(topic.chatId, topic.messageThreadId);
-  if (existing) {
-    if (existing.repoPath !== config.managerRepoPath || existing.topicName !== "manager") {
-      storage.updateBindingRepoPath(existing.id, config.managerRepoPath, "manager");
-      storage.audit({
-        telegramUserId: ctx.from?.id ?? null,
-        chatId: topic.chatId,
-        messageThreadId: topic.messageThreadId,
-        eventType: "manager_binding_repo_updated",
-        details: {
-          previousRepoPath: existing.repoPath,
-          previousTopicName: existing.topicName,
-          repoPath: config.managerRepoPath,
-          topicName: "manager",
-        },
-      });
-      const updated = storage.getBindingById(existing.id) ?? existing;
-      existing.repoPath = updated.repoPath;
-      existing.topicName = updated.topicName;
-      existing.codexThreadId = updated.codexThreadId;
-      existing.tokenUsage = updated.tokenUsage;
-    }
-    if (existing.sandboxMode !== "read-only") {
-      storage.updateBindingMode(existing.id, "read-only");
-      return storage.getBindingById(existing.id) ?? existing;
-    }
-    return existing;
+  text: string,
+): void {
+  const topic = getTopicRef(ctx, config);
+  if (!topic) {
+    return;
   }
 
-  const binding = storage.upsertBinding({
+  storage.addTopicMessage({
     chatId: topic.chatId,
     messageThreadId: topic.messageThreadId,
-    topicName: "manager",
-    repoPath: config.managerRepoPath,
-    createdByUserId: ctx.from?.id ?? 0,
-    sandboxMode: "read-only",
+    telegramMessageId: ctx.message?.message_id ?? null,
+    direction: "in",
+    authorId: ctx.from?.id ?? null,
+    authorName: ctx.from?.username ?? ctx.from?.first_name ?? null,
+    text,
   });
-  storage.audit({
-    telegramUserId: ctx.from?.id ?? null,
-    chatId: topic.chatId,
-    messageThreadId: topic.messageThreadId,
-    eventType: "manager_binding_created",
-    details: { repoPath: binding.repoPath },
-  });
-  return binding;
 }
 
 async function ensureNoActiveRun(
@@ -1958,68 +1946,6 @@ function modelKeyboard(models: CodexModelInfo[], currentModel: string | null): I
   return keyboard;
 }
 
-async function sendManagerRunReport(
-  storage: Storage,
-  bot: Bot,
-  config: AppConfig,
-  binding: TopicBinding,
-  run: RunRecord,
-  status: string,
-  details: string,
-): Promise<void> {
-  if (binding.messageThreadId === 0) {
-    return;
-  }
-
-  storage.addManagerEvent({
-    chatId: binding.chatId,
-    sourceMessageThreadId: binding.messageThreadId,
-    bindingId: binding.id,
-    runId: run.id,
-    eventType: `run_${status}`,
-    summary: managerEventSummary(binding, run, status, details),
-    details: {
-      topicName: topicDisplayName(binding),
-      repoPath: binding.repoPath,
-      prompt: run.prompt,
-      details,
-    },
-  });
-
-  try {
-    await sendTextToTopic(bot, config, binding.chatId, 0, managerRunReportText(binding, run, status, details), {
-      notify: false,
-    });
-  } catch (error) {
-    logger.warn("failed to send manager run report", {
-      chatId: binding.chatId,
-      messageThreadId: binding.messageThreadId,
-      runId: run.id,
-      status,
-      error: errorMessage(error),
-    });
-  }
-}
-
-function managerEventSummary(binding: TopicBinding, run: RunRecord, status: string, details: string): string {
-  const detail = details.trim() ? ` - ${oneLine(details, 160)}` : "";
-  return `${topicDisplayName(binding)} run #${run.id} ${status}: ${oneLine(run.prompt, 180)}${detail}`;
-}
-
-function managerRunReportText(binding: TopicBinding, run: RunRecord, status: string, details: string): string {
-  return [
-    `Manager report: ${topicDisplayName(binding)}`,
-    "",
-    `Run #${run.id}: ${status}`,
-    `Thread: ${binding.messageThreadId}`,
-    `Repo:\n${codeBlock(binding.repoPath)}`,
-    `Prompt:\n${codeBlock(truncateText(run.prompt, 700))}`,
-    details.trim() ? `Details:\n${codeBlock(truncateText(details, 1400))}` : null,
-  ]
-    .filter(Boolean)
-    .join("\n");
-}
-
 async function pinRunMessage(bot: Bot, binding: TopicBinding, run: RunRecord): Promise<void> {
   if (run.telegramMessageId === null) {
     return;
@@ -2069,7 +1995,7 @@ function effectiveSandboxMode(config: AppConfig, sandboxMode: SandboxMode): Sand
 }
 
 function effectiveRunSandboxMode(config: AppConfig, binding: TopicBinding): SandboxMode {
-  return binding.messageThreadId === 0 ? binding.sandboxMode : effectiveSandboxMode(config, binding.sandboxMode);
+  return effectiveSandboxMode(config, binding.sandboxMode);
 }
 
 function isWriteSandbox(sandboxMode: SandboxMode): boolean {
@@ -2201,19 +2127,18 @@ function voiceTranscriptPrompt(transcript: string): string {
 
 function managerDashboardText(storage: Storage, chatId: number): string {
   const bindings = storage.listBindingsForChat(chatId);
-  const workerBindings = bindings.filter((binding) => binding.messageThreadId !== 0);
   const actionable = storage.listActionableRunsForChat(chatId, 12);
   const running = actionable.filter((item) => item.run.status === "running").length;
   const queued = actionable.filter((item) => item.run.status === "queued").length;
   const failed = actionable.filter((item) => item.run.status === "failed").length;
 
   return [
-    "Manager dashboard",
+    "Topic dashboard",
     "",
     "Summary:",
     codeBlock(
       [
-        `worker topics: ${workerBindings.length}`,
+        `bound topics: ${bindings.length}`,
         `running: ${running}`,
         `queued: ${queued}`,
         `failed needing review: ${failed}`,
@@ -2231,7 +2156,7 @@ function managerDashboardText(storage: Storage, chatId: number): string {
 function managerTopicsText(storage: Storage, chatId: number): string {
   const bindings = storage.listBindingsForChat(chatId);
   if (bindings.length === 0) {
-    return "No bound topics in this chat yet. Use /create from topic zero or /bind inside a worker topic.";
+    return "No bound topics in this chat yet. Use /create to create a new topic or /bind inside an existing topic.";
   }
 
   return [
@@ -2247,7 +2172,7 @@ function managerTopicsText(storage: Storage, chatId: number): string {
               ? `latest #${latest.id} ${latest.status}`
               : "no runs";
           return [
-            `${binding.messageThreadId === 0 ? "topic zero" : `topic ${binding.messageThreadId}`}: ${topicDisplayName(binding)}`,
+            `topic ${binding.messageThreadId}: ${topicDisplayName(binding)}`,
             `  status: ${binding.status}; ${runLabel}`,
             `  repo: ${binding.repoPath}`,
           ].join("\n");
@@ -2261,7 +2186,7 @@ function managerTodoText(storage: Storage, chatId: number): string {
   const actionable = storage.listActionableRunsForChat(chatId, 20);
   if (actionable.length === 0) {
     return [
-      "Manager todo:",
+      "Topic todo:",
       codeBlock("No queued, running, or failed runs found."),
       "",
       "Explicit work-item tracking is the next layer; this view currently derives todo state from run status.",
@@ -2275,7 +2200,7 @@ function managerTodoText(storage: Storage, chatId: number): string {
   ] as const;
 
   return [
-    "Manager todo:",
+    "Topic todo:",
     ...grouped.flatMap(([label, items]) =>
       items.length > 0
         ? [
@@ -2286,56 +2211,6 @@ function managerTodoText(storage: Storage, chatId: number): string {
         : [],
     ),
   ].join("\n");
-}
-
-function managerPromptText(storage: Storage, chatId: number, userText: string): string {
-  const bindings = storage.listBindingsForChat(chatId).filter((binding) => binding.messageThreadId !== 0);
-  const actionable = storage.listActionableRunsForChat(chatId, 20);
-  const events = storage.listManagerEvents(chatId, 40);
-
-  return [
-    "You are the topic-zero manager for Codex CLI over Telegram.",
-    "Help organize work across worker topics, identify blockers, suggest priorities, and summarize what has happened.",
-    "If the user asks you to assign or queue work and one managed topic is a clear target, call the telegram_manager.queue_topic tool. Do not tell the user to run /queue_topic or /assign when the tool is available.",
-    "Do not claim you changed worker topics unless the provided context or tool result says that happened.",
-    "",
-    "Current user request:",
-    userText,
-    "",
-    "Managed worker topics:",
-    bindings.length > 0
-      ? bindings.map((binding) => formatManagerTopicContext(storage, binding)).join("\n")
-      : "No worker topics are currently bound.",
-    "",
-    "Actionable runs:",
-    actionable.length > 0
-      ? actionable.map(({ binding, run }) => formatManagerRunContext(binding, run)).join("\n")
-      : "No queued, running, or failed worker runs.",
-    "",
-    "Recent manager event log:",
-    events.length > 0
-      ? events.map((event) => formatManagerEventContext(event)).join("\n")
-      : "No manager events recorded yet.",
-  ].join("\n");
-}
-
-function formatManagerTopicContext(storage: Storage, binding: TopicBinding): string {
-  const active = storage.getActiveRun(binding.id);
-  const latest = storage.getLatestRun(binding.id);
-  const run = active ?? latest;
-  const runSummary = run ? `run #${run.id} ${run.status}: ${oneLine(run.prompt, 120)}` : "no runs";
-  return `- ${topicDisplayName(binding)} (topic ${binding.messageThreadId}) repo=${binding.repoPath} status=${binding.status}; ${runSummary}`;
-}
-
-function formatManagerRunContext(binding: TopicBinding, run: RunRecord): string {
-  const result = run.finalMessage ?? run.errorMessage ?? "";
-  const suffix = result ? ` result=${oneLine(result, 180)}` : "";
-  return `- #${run.id} ${run.status} topic=${topicDisplayName(binding)} prompt=${oneLine(run.prompt, 180)}${suffix}`;
-}
-
-function formatManagerEventContext(event: { createdAt: string; eventType: string; sourceMessageThreadId: number; runId: number | null; summary: string }): string {
-  const runPart = event.runId === null ? "" : ` run=#${event.runId}`;
-  return `- ${event.createdAt} ${event.eventType} topic=${event.sourceMessageThreadId}${runPart}: ${oneLine(event.summary, 220)}`;
 }
 
 function formatManagerRunLine(binding: TopicBinding, run: RunRecord): string {
@@ -2529,7 +2404,7 @@ function helpText(): string {
     "Codex over Telegram commands:",
     "",
     "/bind <absolute_repo_path> - bind this topic to a git repo",
-    "/create <folder> - from topic 0, create a folder, topic, and binding",
+    "/create <folder> - create a folder, topic, and binding",
     "/where - show repo, branch, mode, and git status",
     "/models - list available Codex models",
     "/model - show or set this topic's Codex model",
@@ -2539,9 +2414,9 @@ function helpText(): string {
     "/topic - rename this Telegram topic to the bound folder name",
     "/new - start a fresh Codex thread with clean context",
     "/compact - compact this topic's Codex thread",
-    "/dashboard - from topic zero, show all worker-topic activity",
-    "/topics - from topic zero, list all bound topics",
-    "/todo - from topic zero, show running, queued, and failed work",
+    "/dashboard - show all topic activity",
+    "/topics - list all bound topics",
+    "/todo - show running, queued, and failed work",
     "/status - show active task and context usage",
     "/stop - stop the active Codex process",
     "/diff - show diff summary and attach full diff when large",
@@ -2560,7 +2435,7 @@ function helpText(): string {
 export function telegramCommandMenu(): Array<{ command: string; description: string }> {
   return [
     { command: "bind", description: "Bind this topic to a folder" },
-    { command: "create", description: "Create a folder and topic from topic 0" },
+    { command: "create", description: "Create a folder and topic" },
     { command: "where", description: "Show this topic binding and status" },
     { command: "models", description: "List available Codex models" },
     { command: "model", description: "Show or set this topic model" },
@@ -2569,9 +2444,9 @@ export function telegramCommandMenu(): Array<{ command: string; description: str
     { command: "topic", description: "Rename this Telegram topic" },
     { command: "new", description: "Start a fresh Codex thread" },
     { command: "compact", description: "Compact this topic's Codex thread" },
-    { command: "dashboard", description: "Topic zero manager dashboard" },
+    { command: "dashboard", description: "Show topic activity" },
     { command: "topics", description: "List managed topic bindings" },
-    { command: "todo", description: "Show manager todo from run state" },
+    { command: "todo", description: "Show todo from run state" },
     { command: "status", description: "Show task and context usage" },
     { command: "stop", description: "Stop the active Codex process" },
     { command: "diff", description: "Show git diff summary" },
