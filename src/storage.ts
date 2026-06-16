@@ -407,7 +407,7 @@ export class Storage {
 
   updateBindingPlanMode(bindingId: number, planMode: boolean): void {
     this.db
-      .prepare("UPDATE topic_bindings SET plan_mode = ?, codex_thread_id = NULL, token_usage_json = NULL, updated_at = ? WHERE id = ?")
+      .prepare("UPDATE topic_bindings SET plan_mode = ?, updated_at = ? WHERE id = ?")
       .run(planMode ? 1 : 0, now(), bindingId);
   }
 

@@ -488,7 +488,7 @@ export function createTelegramBot(
       ctx,
       [
         `Plan mode ${requestedState ? "enabled" : "disabled"}.`,
-        "A fresh Codex session will start on the next run.",
+        "The existing Codex session will continue on the next run.",
       ].join("\n"),
       config,
     );
