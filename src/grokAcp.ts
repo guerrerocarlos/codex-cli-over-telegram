@@ -189,6 +189,9 @@ export class ClaudeAcpBackend extends AcpAgentBackend {
 
 class TelegramAcpClient {
   private readonly toolLabels = new Map<string, string>();
+  private readonly xaiToolCalls = new Map<string, XaiToolCallState>();
+  private readonly xaiToolCallIdsByIndex = new Map<number, string>();
+  private readonly xaiEmittedToolCalls = new Set<string>();
   private readonly agentMessages = new Map<string, string>();
 
   constructor(
@@ -221,8 +224,11 @@ class TelegramAcpClient {
         return;
       case "tool_call_update":
         this.toolLabels.set(update.toolCallId, formatToolCall(update, this.toolLabels.get(update.toolCallId)));
+        if (update.status === "completed") {
+          return;
+        }
         this.events.push({
-          type: update.status === "completed" ? "command_completed" : "progress",
+          type: "progress",
           text: `${this.toolLabels.get(update.toolCallId) ?? `Tool ${update.toolCallId}`}${update.status ? ` ${update.status}` : ""}`,
         });
         return;
@@ -235,6 +241,74 @@ class TelegramAcpClient {
       default:
         return;
     }
+  }
+
+  async extNotification(method: string, params: Record<string, unknown>): Promise<void> {
+    if (method === "_x.ai/session_notification") {
+      this.handleXaiSessionNotification(params);
+      return;
+    }
+
+    if (
+      method === "_x.ai/queue/changed" ||
+      method === "_x.ai/session/prompt_complete" ||
+      method === "_x.ai/sessions/changed" ||
+      method.startsWith("_x.ai/")
+    ) {
+      return;
+    }
+
+    logger.debug("ignored acp extension notification", { method });
+  }
+
+  private handleXaiSessionNotification(params: Record<string, unknown>): void {
+    const update = objectRecord(params.update);
+    if (!update) {
+      return;
+    }
+    const sessionUpdate = stringValue(update.sessionUpdate);
+    if (sessionUpdate === "tool_call_delta_chunk") {
+      this.handleXaiToolCallDelta(update);
+    }
+  }
+
+  private handleXaiToolCallDelta(update: Record<string, unknown>): void {
+    const toolIndex = numberValue(update.tool_index);
+    const explicitToolCallId = stringValue(update.tool_call_id);
+    const toolCallId =
+      explicitToolCallId ??
+      (typeof toolIndex === "number" ? this.xaiToolCallIdsByIndex.get(toolIndex) : null) ??
+      `tool-${toolIndex ?? 0}`;
+    if (explicitToolCallId && typeof toolIndex === "number") {
+      this.xaiToolCallIdsByIndex.set(toolIndex, explicitToolCallId);
+    }
+
+    const state = this.xaiToolCalls.get(toolCallId) ?? {
+      id: toolCallId,
+      name: null,
+      argsJson: "",
+    };
+
+    const name = stringValue(update.name);
+    if (name) {
+      state.name = name;
+    }
+
+    const argsDelta = stringValue(update.arguments_delta);
+    if (argsDelta) {
+      state.argsJson += argsDelta;
+    }
+
+    this.xaiToolCalls.set(toolCallId, state);
+
+    const label = formatXaiToolCall(state);
+    if (!label || this.xaiEmittedToolCalls.has(toolCallId)) {
+      return;
+    }
+
+    this.xaiEmittedToolCalls.add(toolCallId);
+    this.toolLabels.set(toolCallId, label);
+    this.events.push({ type: "command_started", text: label });
   }
 
   async requestPermission(params: acp.RequestPermissionRequest): Promise<acp.RequestPermissionResponse> {
@@ -262,6 +336,12 @@ class TelegramAcpClient {
   }
 }
 
+interface XaiToolCallState {
+  id: string;
+  name: string | null;
+  argsJson: string;
+}
+
 function formatToolCall(tool: acp.ToolCall | acp.ToolCallUpdate, fallback?: string): string {
   const title = (typeof tool.title === "string" && tool.title.trim()) || fallback || `Tool ${tool.toolCallId}`;
   const details = [
@@ -271,6 +351,56 @@ function formatToolCall(tool: acp.ToolCall | acp.ToolCallUpdate, fallback?: stri
     ...formatRawObject(tool.rawOutput, { output: true }),
   ];
   return details.length > 0 ? `${title}: ${dedupe(details).join(", ")}` : title;
+}
+
+function formatXaiToolCall(state: XaiToolCallState): string | null {
+  if (!state.name) {
+    return null;
+  }
+
+  const args = parseJsonObject(state.argsJson);
+  if (state.argsJson.trim() && !args) {
+    return null;
+  }
+
+  const details = args ? formatRawObject(args) : [];
+  if (details.length === 0 && !state.argsJson.trim()) {
+    return null;
+  }
+
+  const title = formatToolName(state.name);
+  return details.length > 0 ? `${title}: ${dedupe(details).join(", ")}` : title;
+}
+
+function formatToolName(name: string): string {
+  return name
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function parseJsonObject(value: string): Record<string, unknown> | null {
+  if (!value.trim()) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return objectRecord(parsed);
+  } catch {
+    return null;
+  }
+}
+
+function objectRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+}
+
+function stringValue(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value : null;
+}
+
+function numberValue(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
 function formatLocations(locations: Array<acp.ToolCallLocation> | null | undefined): string[] {

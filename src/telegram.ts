@@ -1624,7 +1624,7 @@ async function executeRun(
       }
 
       if (event.type === "agent_message_delta") {
-        if (config.telegramAgentStreaming && binding.modelProvider !== "openai") {
+        if (config.telegramAgentStreaming && binding.modelProvider !== "openai" && supportsTelegramRichDraft(binding)) {
           richStreamer ??= new TelegramRichDraftStreamer(config, binding);
           richStreamer.append(event.text);
           await richStreamer.flush();
@@ -1701,6 +1701,10 @@ async function executeRun(
     }
     storage.updateBindingStatus(binding.id, "idle");
   }
+}
+
+function supportsTelegramRichDraft(binding: TopicBinding): boolean {
+  return binding.chatId > 0 && binding.messageThreadId <= 0;
 }
 
 function getTopicRef(ctx: Context, config: AppConfig): TopicRef | null {
