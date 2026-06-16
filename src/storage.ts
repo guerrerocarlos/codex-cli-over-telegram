@@ -317,6 +317,13 @@ export class Storage {
     return row ? mapBinding(row) : null;
   }
 
+  listBindingsForChat(chatId: number): TopicBinding[] {
+    const rows = this.db
+      .prepare("SELECT * FROM topic_bindings WHERE chat_id = ? ORDER BY message_thread_id ASC")
+      .all(chatId) as BindingRow[];
+    return rows.map(mapBinding);
+  }
+
   updateBindingMode(bindingId: number, sandboxMode: SandboxMode): void {
     this.db
       .prepare("UPDATE topic_bindings SET sandbox_mode = ?, updated_at = ? WHERE id = ?")
@@ -391,6 +398,42 @@ export class Storage {
       )
       .get(bindingId) as RunRow | undefined;
     return row ? mapRun(row) : null;
+  }
+
+  getLatestRun(bindingId: number): RunRecord | null {
+    const row = this.db
+      .prepare("SELECT * FROM runs WHERE binding_id = ? ORDER BY id DESC LIMIT 1")
+      .get(bindingId) as RunRow | undefined;
+    return row ? mapRun(row) : null;
+  }
+
+  listActionableRunsForChat(chatId: number, limit: number): Array<{ binding: TopicBinding; run: RunRecord }> {
+    const rows = this.db
+      .prepare(
+        `
+        SELECT b.id AS binding_id, r.id AS run_id
+        FROM runs r
+        JOIN topic_bindings b ON b.id = r.binding_id
+        WHERE b.chat_id = ?
+          AND b.message_thread_id != 0
+          AND r.status IN ('queued', 'running', 'failed')
+        ORDER BY
+          CASE r.status
+            WHEN 'running' THEN 0
+            WHEN 'queued' THEN 1
+            ELSE 2
+          END,
+          r.id DESC
+        LIMIT ?
+      `,
+      )
+      .all(chatId, limit) as Array<{ binding_id: number; run_id: number }>;
+
+    return rows.flatMap((row) => {
+      const binding = this.getBindingById(row.binding_id);
+      const run = this.getRun(row.run_id);
+      return binding && run ? [{ binding, run }] : [];
+    });
   }
 
   updateRunStarted(runId: number): void {

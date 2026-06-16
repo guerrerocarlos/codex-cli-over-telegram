@@ -78,6 +78,9 @@ Useful commands:
 /stop
 /new
 /compact
+/dashboard
+/topics
+/todo
 /diff
 /commit Commit message
 /push
@@ -88,6 +91,8 @@ Useful commands:
 Normal messages in a bound chat/topic are sent to Codex. During an active app-server run, normal messages are sent as steering notes to the current turn. Use `/queue <prompt>` when you want the message to wait as the next turn, similar to queueing in the Codex TUI. Use `/ask` if Telegram privacy mode prevents the bot from seeing ordinary group messages.
 
 From topic 0, use `/create <folder>` to create a new folder inside `ALLOWED_REPO_ROOTS`, create a Telegram forum topic for it, and bind that new topic to the folder. If the folder already exists, the bot still creates and binds the topic and reports that it reused the existing folder. Relative paths are created under the first allowed root; `~/...` and absolute paths are accepted when they stay inside an allowed root. The bot must be allowed to manage forum topics, and `ALLOW_UNTHREADED_CHATS=true` is required when Telegram sends the general topic without a `message_thread_id`.
+
+Topic 0 also acts as the manager topic. Use `/dashboard` there to see worker-topic activity across the chat, `/topics` to list all bound topics, and `/todo` to show running, queued, and failed runs that need attention. Worker topics report queued, started, completed, and failed runs back to topic 0.
 
 The bot publishes its slash-command menu to Telegram on startup, so newly added commands may require a service restart before they appear in Telegram's `/` picker.
 

@@ -531,6 +531,37 @@ export function createTelegramBot(
     }
   });
 
+  bot.command("dashboard", async (ctx) => {
+    const topic = await requireTopicZero(ctx, config);
+    if (!topic) {
+      return;
+    }
+    storage.audit({
+      telegramUserId: ctx.from?.id ?? null,
+      chatId: topic.chatId,
+      messageThreadId: topic.messageThreadId,
+      eventType: "manager_dashboard",
+      details: {},
+    });
+    await reply(ctx, managerDashboardText(storage, topic.chatId), config);
+  });
+
+  bot.command("topics", async (ctx) => {
+    const topic = await requireTopicZero(ctx, config);
+    if (!topic) {
+      return;
+    }
+    await reply(ctx, managerTopicsText(storage, topic.chatId), config);
+  });
+
+  bot.command("todo", async (ctx) => {
+    const topic = await requireTopicZero(ctx, config);
+    if (!topic) {
+      return;
+    }
+    await reply(ctx, managerTodoText(storage, topic.chatId), config);
+  });
+
   bot.command("status", async (ctx) => {
     const binding = await requireBinding(ctx, config, storage);
     if (!binding) {
@@ -924,6 +955,7 @@ async function handlePrompt(
 
   if (queuedBehind > 0) {
     await reply(ctx, `Queued run #${run.id} behind ${queuedBehind} active/queued run(s).`, config);
+    await sendManagerRunReport(bot, config, binding, run, "queued", `Queued behind ${queuedBehind} active/queued run(s).`);
   } else {
     await reply(
       ctx,
@@ -1053,6 +1085,7 @@ async function executeRun(
           : "Repo is busy.";
         storage.failRun(run.id, message);
         await sendText(bot, config, binding, message, terminalRunSendOptions(run));
+        await sendManagerRunReport(bot, config, binding, run, "failed", message);
         return;
       }
     }
@@ -1067,6 +1100,7 @@ async function executeRun(
       eventType: "run_started",
       details: { runId: run.id, repoPath: binding.repoPath, sandboxMode },
     });
+    await sendManagerRunReport(bot, config, binding, run, "started", `Repo:\n${binding.repoPath}`);
 
     for await (const event of codex.run({
       bindingId: binding.id,
@@ -1133,6 +1167,7 @@ async function executeRun(
           `Run #${run.id} failed:\n${codeBlock(truncateText(event.error, 2500))}`,
           terminalRunSendOptions(run),
         );
+        await sendManagerRunReport(bot, config, binding, run, "failed", truncateText(event.error, 1200));
         return;
       }
 
@@ -1150,6 +1185,7 @@ async function executeRun(
       completionMessage === lastSentAgentMessage ? "Done." : completionMessage,
       terminalRunSendOptions(run),
     );
+    await sendManagerRunReport(bot, config, binding, run, "completed", truncateText(completionMessage, 1200));
   } catch (error) {
     const message = errorMessage(error);
     storage.failRun(run.id, message);
@@ -1157,6 +1193,7 @@ async function executeRun(
       notify: true,
       replyToMessageId: run.telegramMessageId,
     });
+    await sendManagerRunReport(bot, config, binding, run, "failed", truncateText(message, 1200));
   } finally {
     if (lockAcquired) {
       storage.releaseLock(binding.repoPath, run.id);
@@ -1201,6 +1238,21 @@ async function requireBinding(
   }
 
   return binding;
+}
+
+async function requireTopicZero(ctx: Context, config: AppConfig): Promise<TopicRef | null> {
+  const topic = getTopicRef(ctx, config);
+  if (!topic) {
+    await reply(ctx, "Use this inside topic zero, or enable ALLOW_UNTHREADED_CHATS for the general topic.", config);
+    return null;
+  }
+
+  if (topic.messageThreadId !== 0) {
+    await reply(ctx, "Use this manager command from topic zero.", config);
+    return null;
+  }
+
+  return topic;
 }
 
 async function ensureNoActiveRun(
@@ -1314,13 +1366,24 @@ async function sendText(
   text: string,
   options: SendOptions = {},
 ): Promise<void> {
+  await sendTextToTopic(bot, config, binding.chatId, binding.messageThreadId, text, options);
+}
+
+async function sendTextToTopic(
+  bot: Bot,
+  config: AppConfig,
+  chatId: number,
+  messageThreadId: number,
+  text: string,
+  options: SendOptions = {},
+): Promise<void> {
   const chunks = markdownV2Chunks(text, config.maxTelegramMessageChars);
   for (const [index, chunk] of chunks.entries()) {
     const sendOptions = {
-      message_thread_id: binding.messageThreadId,
       link_preview_options: { is_disabled: true },
       parse_mode: "MarkdownV2",
       disable_notification: !(options.notify === true && index === 0),
+      ...(messageThreadId > 0 ? { message_thread_id: messageThreadId } : {}),
       ...(options.replyToMessageId
         ? {
             reply_parameters: {
@@ -1330,7 +1393,7 @@ async function sendText(
           }
         : {}),
     } as const;
-    await sendQueueFor(config).sendMessage(bot.api, binding.chatId, chunk, sendOptions);
+    await sendQueueFor(config).sendMessage(bot.api, chatId, chunk, sendOptions);
   }
 }
 
@@ -1342,6 +1405,45 @@ async function sendChatAction(bot: Bot, binding: TopicBinding): Promise<void> {
   } catch (error) {
     logger.warn("failed to send chat action", { error: errorMessage(error) });
   }
+}
+
+async function sendManagerRunReport(
+  bot: Bot,
+  config: AppConfig,
+  binding: TopicBinding,
+  run: RunRecord,
+  status: string,
+  details: string,
+): Promise<void> {
+  if (binding.messageThreadId === 0) {
+    return;
+  }
+
+  try {
+    await sendTextToTopic(bot, config, binding.chatId, 0, managerRunReportText(binding, run, status, details));
+  } catch (error) {
+    logger.warn("failed to send manager run report", {
+      chatId: binding.chatId,
+      messageThreadId: binding.messageThreadId,
+      runId: run.id,
+      status,
+      error: errorMessage(error),
+    });
+  }
+}
+
+function managerRunReportText(binding: TopicBinding, run: RunRecord, status: string, details: string): string {
+  return [
+    `Manager report: ${topicDisplayName(binding)}`,
+    "",
+    `Run #${run.id}: ${status}`,
+    `Thread: ${binding.messageThreadId}`,
+    `Repo:\n${codeBlock(binding.repoPath)}`,
+    `Prompt:\n${codeBlock(truncateText(run.prompt, 700))}`,
+    details.trim() ? `Details:\n${codeBlock(truncateText(details, 1400))}` : null,
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 async function pinRunMessage(bot: Bot, binding: TopicBinding, run: RunRecord): Promise<void> {
@@ -1517,6 +1619,107 @@ function voiceTranscriptPrompt(transcript: string): string {
     "",
     transcript,
   ].join("\n");
+}
+
+function managerDashboardText(storage: Storage, chatId: number): string {
+  const bindings = storage.listBindingsForChat(chatId);
+  const workerBindings = bindings.filter((binding) => binding.messageThreadId !== 0);
+  const actionable = storage.listActionableRunsForChat(chatId, 12);
+  const running = actionable.filter((item) => item.run.status === "running").length;
+  const queued = actionable.filter((item) => item.run.status === "queued").length;
+  const failed = actionable.filter((item) => item.run.status === "failed").length;
+
+  return [
+    "Manager dashboard",
+    "",
+    "Summary:",
+    codeBlock(
+      [
+        `worker topics: ${workerBindings.length}`,
+        `running: ${running}`,
+        `queued: ${queued}`,
+        `failed needing review: ${failed}`,
+      ].join("\n"),
+    ),
+    "Active work:",
+    actionable.length > 0
+      ? codeBlock(actionable.map(({ binding, run }) => formatManagerRunLine(binding, run)).join("\n"))
+      : codeBlock("none"),
+    "",
+    "Use /topics for all bindings and /todo for actionable runs.",
+  ].join("\n");
+}
+
+function managerTopicsText(storage: Storage, chatId: number): string {
+  const bindings = storage.listBindingsForChat(chatId);
+  if (bindings.length === 0) {
+    return "No bound topics in this chat yet. Use /create from topic zero or /bind inside a worker topic.";
+  }
+
+  return [
+    "Managed topics:",
+    codeBlock(
+      bindings
+        .map((binding) => {
+          const active = storage.getActiveRun(binding.id);
+          const latest = storage.getLatestRun(binding.id);
+          const runLabel = active
+            ? `active #${active.id} ${active.status}`
+            : latest
+              ? `latest #${latest.id} ${latest.status}`
+              : "no runs";
+          return [
+            `${binding.messageThreadId === 0 ? "topic zero" : `topic ${binding.messageThreadId}`}: ${topicDisplayName(binding)}`,
+            `  status: ${binding.status}; ${runLabel}`,
+            `  repo: ${binding.repoPath}`,
+          ].join("\n");
+        })
+        .join("\n\n"),
+    ),
+  ].join("\n");
+}
+
+function managerTodoText(storage: Storage, chatId: number): string {
+  const actionable = storage.listActionableRunsForChat(chatId, 20);
+  if (actionable.length === 0) {
+    return [
+      "Manager todo:",
+      codeBlock("No queued, running, or failed runs found."),
+      "",
+      "Explicit work-item tracking is the next layer; this view currently derives todo state from run status.",
+    ].join("\n");
+  }
+
+  const grouped = [
+    ["Running", actionable.filter((item) => item.run.status === "running")],
+    ["Queued", actionable.filter((item) => item.run.status === "queued")],
+    ["Needs review", actionable.filter((item) => item.run.status === "failed")],
+  ] as const;
+
+  return [
+    "Manager todo:",
+    ...grouped.flatMap(([label, items]) =>
+      items.length > 0
+        ? [
+            "",
+            `${label}:`,
+            codeBlock(items.map(({ binding, run }) => formatManagerRunLine(binding, run)).join("\n")),
+          ]
+        : [],
+    ),
+  ].join("\n");
+}
+
+function formatManagerRunLine(binding: TopicBinding, run: RunRecord): string {
+  return `#${run.id} ${run.status.padEnd(9)} ${topicDisplayName(binding)} - ${oneLine(run.prompt, 90)}`;
+}
+
+function topicDisplayName(binding: TopicBinding): string {
+  return binding.topicName || path.basename(binding.repoPath) || `topic ${binding.messageThreadId}`;
+}
+
+function oneLine(value: string, maxLength: number): string {
+  return truncateText(value.replace(/\s+/g, " ").trim(), maxLength);
 }
 
 async function modelLabel(config: AppConfig, binding: TopicBinding): Promise<string> {
@@ -1708,6 +1911,9 @@ function helpText(): string {
     "/topic - rename this Telegram topic to the bound folder name",
     "/new - start a fresh Codex thread with clean context",
     "/compact - compact this topic's Codex thread",
+    "/dashboard - from topic zero, show all worker-topic activity",
+    "/topics - from topic zero, list all bound topics",
+    "/todo - from topic zero, show running, queued, and failed work",
     "/status - show active task and context usage",
     "/stop - stop the active Codex process",
     "/diff - show diff summary and attach full diff when large",
@@ -1733,6 +1939,9 @@ export function telegramCommandMenu(): Array<{ command: string; description: str
     { command: "topic", description: "Rename this Telegram topic" },
     { command: "new", description: "Start a fresh Codex thread" },
     { command: "compact", description: "Compact this topic's Codex thread" },
+    { command: "dashboard", description: "Topic zero manager dashboard" },
+    { command: "topics", description: "List managed topic bindings" },
+    { command: "todo", description: "Show manager todo from run state" },
     { command: "status", description: "Show task and context usage" },
     { command: "stop", description: "Stop the active Codex process" },
     { command: "diff", description: "Show git diff summary" },
