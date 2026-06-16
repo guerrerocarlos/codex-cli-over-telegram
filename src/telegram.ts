@@ -562,6 +562,14 @@ export function createTelegramBot(
     await reply(ctx, managerTodoText(storage, topic.chatId), config);
   });
 
+  bot.command("queue_topic", async (ctx) => {
+    await handleManagerQueueTopicCommand(ctx, config, storage, codex, bot, queue, ctx.match.trim());
+  });
+
+  bot.command("assign", async (ctx) => {
+    await handleManagerQueueTopicCommand(ctx, config, storage, codex, bot, queue, ctx.match.trim());
+  });
+
   bot.command("status", async (ctx) => {
     const binding = await requireBinding(ctx, config, storage);
     if (!binding) {
@@ -737,7 +745,17 @@ export function createTelegramBot(
 
   bot.on("message:text", async (ctx) => {
     const text = ctx.message.text.trim();
-    if (!text || text.startsWith("/")) {
+    if (!text) {
+      return;
+    }
+    if (isTopicZero(ctx, config)) {
+      const queueTopicAlias = parseQueueTopicAlias(text);
+      if (queueTopicAlias !== null) {
+        await handleManagerQueueTopicCommand(ctx, config, storage, codex, bot, queue, queueTopicAlias);
+        return;
+      }
+    }
+    if (text.startsWith("/")) {
       return;
     }
     if (isTopicZero(ctx, config)) {
@@ -946,6 +964,211 @@ async function handleManagerPrompt(
     managerPromptText(storage, topic.chatId, text),
     options,
   );
+}
+
+async function handleManagerQueueTopicCommand(
+  ctx: Context,
+  config: AppConfig,
+  storage: Storage,
+  codex: CodexBackend,
+  bot: Bot,
+  queue: RunQueue,
+  input: string,
+): Promise<void> {
+  const topic = await requireTopicZero(ctx, config);
+  if (!topic) {
+    return;
+  }
+
+  const request = parseManagerQueueTopicRequest(input);
+  if (!request) {
+    await reply(ctx, "Usage: /queue_topic <topic-id-or-name> <prompt>", config);
+    return;
+  }
+
+  const binding = findManagerTargetBinding(storage, topic.chatId, request.selector);
+  if (!binding) {
+    await reply(
+      ctx,
+      [
+        `Could not find managed topic: ${request.selector}`,
+        "",
+        "Known topics:",
+        codeBlock(managerTopicSelectorList(storage, topic.chatId)),
+      ].join("\n"),
+      config,
+    );
+    return;
+  }
+
+  const key = topicKey(binding.chatId, binding.messageThreadId);
+  const queuedBehind = queue.depth(key);
+  const run = storage.createRun(binding.id, null, request.prompt);
+  recordManagerRunEvent(
+    storage,
+    binding,
+    run,
+    "queued",
+    `Queued from topic zero${queuedBehind > 0 ? ` behind ${queuedBehind} active/queued run(s)` : ""}.`,
+  );
+  storage.audit({
+    telegramUserId: ctx.from?.id ?? null,
+    chatId: topic.chatId,
+    messageThreadId: topic.messageThreadId,
+    eventType: "manager_queue_topic",
+    details: {
+      targetMessageThreadId: binding.messageThreadId,
+      targetTopicName: topicDisplayName(binding),
+      runId: run.id,
+      queuedBehind,
+    },
+  });
+
+  await reply(
+    ctx,
+    [
+      `Queued run #${run.id} in ${topicDisplayName(binding)}.`,
+      `Topic: ${binding.messageThreadId}`,
+      queuedBehind > 0 ? `Behind ${queuedBehind} active/queued run(s).` : "It will start when a worker slot is available.",
+    ].join("\n"),
+    config,
+  );
+  await sendText(
+    bot,
+    config,
+    binding,
+    [
+      `Manager queued run #${run.id}.`,
+      "",
+      "Prompt:",
+      codeBlock(request.prompt),
+    ].join("\n"),
+    { notify: true },
+  );
+
+  queue.enqueue(key, async () => {
+    const freshBinding = storage.getBindingById(binding.id);
+    if (!freshBinding) {
+      storage.failRun(run.id, "topic binding was removed before the manager-queued run started");
+      return;
+    }
+    await executeRun(bot, config, storage, codex, freshBinding, run, request.prompt);
+  });
+}
+
+interface ManagerQueueTopicRequest {
+  selector: string;
+  prompt: string;
+}
+
+function parseQueueTopicAlias(text: string): string | null {
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const idAlias = trimmed.match(/^#\s*([0-9]+)\s*[:\-]?\s*([\s\S]+)$/);
+  if (idAlias) {
+    const selector = idAlias[1];
+    const prompt = idAlias[2].trim();
+    return prompt ? `${selector} ${prompt}` : null;
+  }
+
+  const quotedAlias = trimmed.match(/^(?:topic|to)\s+"([^"]+)"\s*[:\-]?\s*([\s\S]+)$/i);
+  if (quotedAlias) {
+    const selector = quotedAlias[1].trim();
+    const prompt = quotedAlias[2].trim();
+    return prompt ? `"${selector}" ${prompt}` : null;
+  }
+
+  const simpleAlias = trimmed.match(/^(?:topic|to)\s+([A-Za-z0-9._-]+)\s*[:\-]?\s*([\s\S]+)$/i);
+  if (simpleAlias) {
+    const selector = simpleAlias[1].trim();
+    const prompt = simpleAlias[2].trim();
+    return prompt ? `${selector} ${prompt}` : null;
+  }
+
+  return null;
+}
+
+function parseManagerQueueTopicRequest(input: string): ManagerQueueTopicRequest | null {
+  const trimmed = input.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const quoted = trimmed.match(/^"([^"]+)"\s+([\s\S]+)\s*$/);
+  if (quoted) {
+    const selector = quoted[1].trim();
+    const prompt = quoted[2].trim();
+    return prompt ? { selector, prompt } : null;
+  }
+
+  const split = trimmed.match(/^(\S+)\s+([\s\S]+)\s*$/);
+  if (!split) {
+    return null;
+  }
+
+  const selector = split[1].trim();
+  const prompt = split[2].trim();
+  if (!selector || !prompt) {
+    return null;
+  }
+
+  return { selector, prompt };
+}
+
+function findManagerTargetBinding(storage: Storage, chatId: number, selector: string): TopicBinding | null {
+  const bindings = storage.listBindingsForChat(chatId).filter((binding) => binding.messageThreadId !== 0);
+  if (bindings.length === 0) {
+    return null;
+  }
+
+  const normalizedSelector = selector.trim().toLowerCase();
+  const numericMatch = normalizedSelector.match(/^\s*#?(\d+)\s*$/);
+  if (numericMatch) {
+    const targetThreadId = Number.parseInt(numericMatch[1], 10);
+    return bindings.find((binding) => binding.messageThreadId === targetThreadId) ?? null;
+  }
+
+  const topicNameMatch = bindings.find((binding) =>
+    topicDisplayName(binding).toLowerCase() === normalizedSelector,
+  );
+  if (topicNameMatch) {
+    return topicNameMatch;
+  }
+
+  const repoNameMatch = bindings.find((binding) =>
+    path.basename(binding.repoPath).toLowerCase() === normalizedSelector,
+  );
+  if (repoNameMatch) {
+    return repoNameMatch;
+  }
+
+  const startsWithMatches = bindings.filter(
+    (binding) =>
+      topicDisplayName(binding).toLowerCase().startsWith(normalizedSelector) ||
+      path.basename(binding.repoPath).toLowerCase().startsWith(normalizedSelector),
+  );
+  if (startsWithMatches.length === 1) {
+    return startsWithMatches[0];
+  }
+
+  return null;
+}
+
+function managerTopicSelectorList(storage: Storage, chatId: number): string {
+  const bindings = storage.listBindingsForChat(chatId).filter((binding) => binding.messageThreadId !== 0);
+  if (bindings.length === 0) {
+    return "No worker topics are currently bound.";
+  }
+
+  return bindings
+    .map(
+      (binding) =>
+        `#${binding.messageThreadId}: ${topicDisplayName(binding)} (${path.basename(binding.repoPath)})`,
+    )
+    .join("\n");
 }
 
 async function handlePrompt(
@@ -2073,6 +2296,8 @@ function helpText(): string {
     "/unbind - remove this topic binding",
     "/ask <prompt> - send a Codex prompt as a command",
     "/queue <prompt> - queue the next Codex turn instead of steering the active run",
+    "/queue_topic <topic-id-or-name> <prompt> - queue prompt for a worker topic",
+    "/assign <topic-id-or-name> <prompt> - alias for /queue_topic",
     "",
     "Any ordinary message in a bound topic is sent to Codex if Telegram privacy mode allows it. During an active app-server run, ordinary messages steer the current turn. Use /queue to force a follow-up turn, or /ask when privacy mode is enabled.",
   ].join("\n");
@@ -2101,6 +2326,8 @@ export function telegramCommandMenu(): Array<{ command: string; description: str
     { command: "unbind", description: "Remove this topic binding" },
     { command: "ask", description: "Send a Codex prompt as a command" },
     { command: "queue", description: "Queue the next Codex turn" },
+    { command: "queue_topic", description: "Queue a prompt for a worker topic" },
+    { command: "assign", description: "Alias for /queue_topic" },
   ];
 }
 
