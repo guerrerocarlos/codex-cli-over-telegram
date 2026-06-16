@@ -1,7 +1,7 @@
 import { mkdir, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { Bot, InputFile, type Context } from "grammy";
+import { Bot, InlineKeyboard, InputFile, type Context } from "grammy";
 import type { AppConfig } from "./config.js";
 import type {
   CodexBackend,
@@ -17,7 +17,13 @@ import { RunQueue } from "./runQueue.js";
 import { resolveAllowedRepoPath } from "./pathPolicy.js";
 import { codeBlock, markdownV2Chunks, truncateText } from "./text.js";
 import { commitAll, currentBranch, diffSummary, fullDiff, isGitRepository, pushHead, statusShort } from "./git.js";
-import { listCodexModels, readCodexConfig, readCodexUsage, type CodexConfigSnapshot } from "./codexMetadata.js";
+import {
+  listCodexModels,
+  readCodexConfig,
+  readCodexUsage,
+  type CodexConfigSnapshot,
+  type CodexModelInfo,
+} from "./codexMetadata.js";
 import { logger } from "./logger.js";
 import { TelegramSendQueue } from "./telegramSendQueue.js";
 import {
@@ -315,24 +321,27 @@ export function createTelegramBot(
   });
 
   bot.command("models", async (ctx) => {
+    const binding = await requireBinding(ctx, config, storage);
+    if (!binding) {
+      return;
+    }
+
     try {
       const models = await listCodexModels(config.codexBin);
       if (models.length === 0) {
         await reply(ctx, "No Codex models were returned by app-server.", config);
         return;
       }
-      await reply(
+      await replyWithModelKeyboard(
         ctx,
+        config,
         [
           "Available models:",
-          codeBlock(
-            models
-              .map((model) => `${model.model}${model.isDefault ? " (default)" : ""} - ${model.displayName}`)
-              .join("\n"),
-          ),
-          "Set this topic with /model <model>.",
+          "",
+          `Current: ${await modelLabel(config, binding)}`,
+          "Tap a button to set this topic's model.",
         ].join("\n"),
-        config,
+        modelKeyboard(models, binding.model),
       );
     } catch (error) {
       await reply(ctx, `Could not list models:\n${codeBlock(errorMessage(error))}`, config);
@@ -347,18 +356,7 @@ export function createTelegramBot(
 
     const requestedModel = ctx.match.trim();
     if (!requestedModel) {
-      await reply(
-        ctx,
-        [
-          "Current model:",
-          codeBlock(await modelLabel(config, binding)),
-          "",
-          "Use /models to list available models.",
-          "Use /model <model> to set this topic.",
-          "Use /model default to return to Codex config default.",
-        ].join("\n"),
-        config,
-      );
+      await sendModelSwitcher(ctx, config, binding);
       return;
     }
 
@@ -401,6 +399,58 @@ export function createTelegramBot(
         config,
       );
     } catch (error) {
+      await reply(ctx, `Could not set model:\n${codeBlock(errorMessage(error))}`, config);
+    }
+  });
+
+  bot.callbackQuery(/^model:(default|set:.+)$/, async (ctx) => {
+    const binding = await requireBinding(ctx, config, storage);
+    if (!binding) {
+      await ctx.answerCallbackQuery({ text: "This topic is not bound.", show_alert: true });
+      return;
+    }
+
+    const data = ctx.callbackQuery.data;
+    if (data === "model:default") {
+      storage.updateBindingModel(binding.id, null);
+      storage.audit({
+        telegramUserId: ctx.from?.id ?? null,
+        chatId: binding.chatId,
+        messageThreadId: binding.messageThreadId,
+        eventType: "model",
+        details: { model: null },
+      });
+      await ctx.answerCallbackQuery({ text: "Model reset to default." });
+      await reply(ctx, `Topic model reset to Codex config default:\n${codeBlock(await globalModelLabel(config, binding.repoPath))}`, config);
+      return;
+    }
+
+    const requestedModel = data.slice("model:set:".length);
+    try {
+      const models = await listCodexModels(config.codexBin);
+      const match = models.find((model) => model.model === requestedModel || model.id === requestedModel);
+      if (!match) {
+        await ctx.answerCallbackQuery({ text: "Unknown model.", show_alert: true });
+        await sendModelSwitcher(ctx, config, binding);
+        return;
+      }
+
+      storage.updateBindingModel(binding.id, match.model);
+      storage.audit({
+        telegramUserId: ctx.from?.id ?? null,
+        chatId: binding.chatId,
+        messageThreadId: binding.messageThreadId,
+        eventType: "model",
+        details: { model: match.model },
+      });
+      await ctx.answerCallbackQuery({ text: `Model set to ${match.model}.` });
+      await reply(
+        ctx,
+        [`Topic model set to:`, codeBlock(match.model), "", "A fresh Codex session will start on the next run."].join("\n"),
+        config,
+      );
+    } catch (error) {
+      await ctx.answerCallbackQuery({ text: "Could not set model.", show_alert: true });
       await reply(ctx, `Could not set model:\n${codeBlock(errorMessage(error))}`, config);
     }
   });
@@ -1538,12 +1588,12 @@ async function executeRun(
 }
 
 function getTopicRef(ctx: Context, config: AppConfig): TopicRef | null {
-  const chatId = ctx.chat?.id;
+  const chatId = ctx.chat?.id ?? ctx.callbackQuery?.message?.chat.id;
   if (!chatId) {
     return null;
   }
 
-  const messageThreadId = ctx.message?.message_thread_id;
+  const messageThreadId = ctx.message?.message_thread_id ?? ctx.callbackQuery?.message?.message_thread_id;
   if (typeof messageThreadId === "number") {
     return { chatId, messageThreadId };
   }
@@ -1728,11 +1778,11 @@ async function reply(
   config: AppConfig,
   sendQueue = sendQueueFor(config),
 ): Promise<void> {
-  const chatId = ctx.chat?.id;
+  const chatId = ctx.chat?.id ?? ctx.callbackQuery?.message?.chat.id;
   if (!chatId) {
     return;
   }
-  const messageThreadId = ctx.message?.message_thread_id;
+  const messageThreadId = ctx.message?.message_thread_id ?? ctx.callbackQuery?.message?.message_thread_id;
   for (const chunk of markdownV2Chunks(text, config.maxTelegramMessageChars)) {
     const options =
       typeof messageThreadId === "number"
@@ -1748,6 +1798,40 @@ async function reply(
             disable_notification: true,
           };
     await sendQueue.sendMessage(ctx.api, chatId, chunk, options);
+  }
+}
+
+async function replyWithModelKeyboard(
+  ctx: Context,
+  config: AppConfig,
+  text: string,
+  keyboard: InlineKeyboard,
+  sendQueue = sendQueueFor(config),
+): Promise<void> {
+  const chatId = ctx.chat?.id ?? ctx.callbackQuery?.message?.chat.id;
+  if (!chatId) {
+    return;
+  }
+  const messageThreadId = ctx.message?.message_thread_id ?? ctx.callbackQuery?.message?.message_thread_id;
+  const chunks = markdownV2Chunks(text, config.maxTelegramMessageChars);
+  const first = chunks[0] ?? "";
+  const options = {
+    ...(typeof messageThreadId === "number" ? { message_thread_id: messageThreadId } : {}),
+    link_preview_options: { is_disabled: true },
+    parse_mode: "MarkdownV2" as const,
+    disable_notification: true,
+    reply_markup: keyboard,
+  };
+  await sendQueue.sendMessage(ctx.api, chatId, first, options);
+
+  for (const chunk of chunks.slice(1)) {
+    const followupOptions = {
+      ...(typeof messageThreadId === "number" ? { message_thread_id: messageThreadId } : {}),
+      link_preview_options: { is_disabled: true },
+      parse_mode: "MarkdownV2" as const,
+      disable_notification: true,
+    };
+    await sendQueue.sendMessage(ctx.api, chatId, chunk, followupOptions);
   }
 }
 
@@ -1797,6 +1881,46 @@ async function sendChatAction(bot: Bot, binding: TopicBinding): Promise<void> {
   } catch (error) {
     logger.warn("failed to send chat action", { error: errorMessage(error) });
   }
+}
+
+async function sendModelSwitcher(ctx: Context, config: AppConfig, binding: TopicBinding): Promise<void> {
+  try {
+    const models = await listCodexModels(config.codexBin);
+    if (models.length === 0) {
+      await reply(ctx, "No Codex models were returned by app-server.", config);
+      return;
+    }
+
+    await replyWithModelKeyboard(
+      ctx,
+      config,
+      [
+        "Choose model for this topic.",
+        "",
+        `Current: ${await modelLabel(config, binding)}`,
+        "A fresh Codex session starts after changing the model.",
+      ].join("\n"),
+      modelKeyboard(models, binding.model),
+    );
+  } catch (error) {
+    await reply(ctx, `Could not list models:\n${codeBlock(errorMessage(error))}`, config);
+  }
+}
+
+function modelKeyboard(models: CodexModelInfo[], currentModel: string | null): InlineKeyboard {
+  const keyboard = new InlineKeyboard();
+  keyboard.text(`${currentModel === null ? "Default (current)" : "Default"}`, "model:default").row();
+
+  for (const model of models) {
+    const callbackData = `model:set:${model.model}`;
+    if (callbackData.length > 64) {
+      continue;
+    }
+    const label = `${model.displayName || model.model}${currentModel === model.model ? " (current)" : ""}`;
+    keyboard.text(label.slice(0, 56), callbackData).row();
+  }
+
+  return keyboard;
 }
 
 async function sendManagerRunReport(
