@@ -1510,7 +1510,7 @@ function resumeNoticeText(run: InterruptedRunRecord): string {
   if (run.interruptedStatus === "running") {
     return [
       `Service restarted while run #${run.id} was running.`,
-      "Resuming the saved Codex thread with a continue prompt.",
+      "Resuming the saved agent thread with a continue prompt.",
     ].join("\n");
   }
 
@@ -1527,7 +1527,7 @@ function resumePromptForRun(run: InterruptedRunRecord): string {
 
   return [
     "The Codex CLI over Telegram service restarted while the previous turn was running.",
-    "Continue the interrupted work from the existing thread and current workspace state.",
+    "Continue the interrupted work from the existing agent thread and current workspace state.",
     "Do not restart from scratch unless that is necessary to recover safely.",
     "",
     "Original saved prompt for reference:",
