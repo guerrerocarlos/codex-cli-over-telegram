@@ -76,6 +76,7 @@ interface TelegramMessageWithFiles {
 
 interface HandlePromptOptions {
   forceQueue?: boolean;
+  planMode?: boolean;
   contextFiles?: ContextFilePrompt[];
   includePendingContext?: boolean;
 }
@@ -211,7 +212,6 @@ export function createTelegramBot(
           "",
           `Branch:\n${codeBlock(branch)}`,
           `Model:\n${codeBlock(await modelLabel(config, binding))}`,
-          `Plan mode:\n${codeBlock(formatPlanMode(binding.planMode))}`,
           `Mode:\n${codeBlock(effectiveRunSandboxMode(config, binding))}`,
           isRepo ? null : "Git commands are unavailable until this path is initialized as a repo.",
           renameResult,
@@ -311,7 +311,6 @@ export function createTelegramBot(
         codeBlock(binding.repoPath),
         `Branch:\n${codeBlock(branch)}`,
         `Model:\n${codeBlock(await modelLabel(config, binding))}`,
-        `Plan mode:\n${codeBlock(formatPlanMode(binding.planMode))}`,
         `Mode:\n${codeBlock(effectiveRunSandboxMode(config, binding))}`,
         `Codex session:\n${codeBlock(binding.codexThreadId ?? "(new)")}`,
         `Status:\n${codeBlock(binding.status)}`,
@@ -502,42 +501,12 @@ export function createTelegramBot(
   });
 
   bot.command("plan", async (ctx) => {
-    const binding = await requireBinding(ctx, config, storage);
-    if (!binding) {
+    const text = ctx.match.trim();
+    if (!text) {
+      await reply(ctx, "Usage: /plan what you want the agent to plan", config);
       return;
     }
-
-    const requestedState = parsePlanMode(ctx.match.trim());
-    if (requestedState === null) {
-      await reply(
-        ctx,
-        [
-          `Plan mode is ${formatPlanMode(binding.planMode)}.`,
-          "",
-          "Usage:",
-          codeBlock(["/plan on", "/plan off"].join("\n")),
-        ].join("\n"),
-        config,
-      );
-      return;
-    }
-
-    storage.updateBindingPlanMode(binding.id, requestedState);
-    storage.audit({
-      telegramUserId: ctx.from?.id ?? null,
-      chatId: binding.chatId,
-      messageThreadId: binding.messageThreadId,
-      eventType: "plan_mode",
-      details: { planMode: requestedState },
-    });
-    await reply(
-      ctx,
-      [
-        `Plan mode ${requestedState ? "enabled" : "disabled"}.`,
-        "The existing Codex session will continue on the next run.",
-      ].join("\n"),
-      config,
-    );
+    await handlePrompt(ctx, config, storage, codex, bot, queue, text, { planMode: true, forceQueue: true });
   });
 
   bot.command("mode", async (ctx) => {
@@ -692,7 +661,6 @@ export function createTelegramBot(
           `Idle.`,
           `Repo:\n${codeBlock(binding.repoPath)}`,
           `Model:\n${codeBlock(await modelLabel(config, binding))}`,
-          `Plan mode:\n${codeBlock(formatPlanMode(binding.planMode))}`,
           `Mode:\n${codeBlock(effectiveRunSandboxMode(config, binding))}`,
           `Context:\n${codeBlock(formatThreadTokenUsage(binding.tokenUsage))}`,
           usage,
@@ -706,7 +674,7 @@ export function createTelegramBot(
       [
         `Run #${active.id} is ${active.status}.`,
         `Model:\n${codeBlock(await modelLabel(config, binding))}`,
-        `Plan mode:\n${codeBlock(formatPlanMode(binding.planMode))}`,
+        `Plan mode:\n${codeBlock(formatPlanMode(active.planMode))}`,
         `Context:\n${codeBlock(formatThreadTokenUsage(binding.tokenUsage))}`,
         `Prompt:\n${codeBlock(truncateText(active.prompt, 700))}`,
         usage,
@@ -1138,7 +1106,7 @@ export async function queueManagerTopicRun(input: QueueManagerTopicRunInput): Pr
       storage.failRun(run.id, "topic binding was removed before the manager-queued run started");
       return;
     }
-    await executeRun(bot, config, storage, codex, freshBinding, run, request.prompt);
+    await executeRun(bot, config, storage, codex, { ...freshBinding, planMode: run.planMode }, run, request.prompt);
   });
 
   return {
@@ -1440,7 +1408,8 @@ async function handlePrompt(
 
   const key = topicKey(binding.chatId, binding.messageThreadId);
   const queuedBehind = queue.depth(key);
-  const run = storage.createRun(binding.id, ctx.message?.message_id ?? null, promptText);
+  const planMode = options.planMode === true;
+  const run = storage.createRun(binding.id, ctx.message?.message_id ?? null, promptText, planMode);
 
   if (queuedBehind > 0) {
     await reply(ctx, `Queued run #${run.id} behind ${queuedBehind} active/queued run(s).`, config);
@@ -1451,7 +1420,7 @@ async function handlePrompt(
         `Started run #${run.id}.`,
         `Repo:\n${codeBlock(binding.repoPath)}`,
         `Model:\n${codeBlock(await modelLabel(config, binding))}`,
-        `Plan mode:\n${codeBlock(formatPlanMode(binding.planMode))}`,
+        `Plan mode:\n${codeBlock(formatPlanMode(run.planMode))}`,
         `Mode:\n${codeBlock(effectiveRunSandboxMode(config, binding))}`,
       ].join("\n"),
       config,
@@ -1464,7 +1433,7 @@ async function handlePrompt(
       storage.failRun(run.id, "topic binding was removed before the run started");
       return;
     }
-    await executeRun(bot, config, storage, codex, freshBinding, run, promptText);
+    await executeRun(bot, config, storage, codex, { ...freshBinding, planMode: run.planMode }, run, promptText);
   });
 }
 
@@ -1506,7 +1475,7 @@ async function resumeInterruptedRuns(
         resumeNoticeText(run),
         { notify: true },
       );
-      await executeRun(bot, config, storage, codex, freshBinding, run, resumePromptForRun(run));
+      await executeRun(bot, config, storage, codex, { ...freshBinding, planMode: run.planMode }, run, resumePromptForRun(run));
     });
   }
 }
@@ -2158,16 +2127,6 @@ function parseMode(input: string): SandboxMode | null {
   return null;
 }
 
-function parsePlanMode(input: string): boolean | null {
-  if (["on", "true", "yes", "1", "plan"].includes(input)) {
-    return true;
-  }
-  if (["off", "false", "no", "0", "default"].includes(input)) {
-    return false;
-  }
-  return null;
-}
-
 function formatPlanMode(planMode: boolean): string {
   return planMode ? "on" : "off";
 }
@@ -2600,7 +2559,7 @@ function helpText(): string {
     "/provider - show or set this topic's provider: openai, xai, or claude",
     "/models - list available models for this topic's provider",
     "/model - show or set this topic's model",
-    "/plan - show or toggle plan mode for this topic",
+    "/plan <prompt> - run one agent turn in plan mode",
     "/mode read - use read-only Codex sandbox",
     "/mode write - allow Codex workspace edits",
     "/topic - rename this Telegram topic to the bound folder name",
@@ -2632,7 +2591,7 @@ export function telegramCommandMenu(): Array<{ command: string; description: str
     { command: "provider", description: "Set model provider" },
     { command: "models", description: "List available provider models" },
     { command: "model", description: "Show or set this topic model" },
-    { command: "plan", description: "Show or toggle plan mode" },
+    { command: "plan", description: "Run one turn in plan mode" },
     { command: "mode", description: "Set read or write sandbox mode" },
     { command: "topic", description: "Rename this Telegram topic" },
     { command: "new", description: "Start a fresh agent thread" },

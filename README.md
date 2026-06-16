@@ -106,8 +106,7 @@ Useful commands:
 /model gpt-5.5 fast
 /model xai:grok-build-0.1
 /model claude:sonnet
-/plan on
-/plan off
+/plan outline the implementation before editing
 /mode read
 /mode write
 /status

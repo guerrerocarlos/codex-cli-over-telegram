@@ -43,6 +43,7 @@ export interface RunRecord {
   bindingId: number;
   telegramMessageId: number | null;
   prompt: string;
+  planMode: boolean;
   status: RunStatus;
   codexRunId: string | null;
   startedAt: string | null;

@@ -34,6 +34,7 @@ interface RunRow {
   binding_id: number;
   telegram_message_id: number | null;
   prompt: string;
+  plan_mode: number;
   status: RunStatus;
   codex_run_id: string | null;
   started_at: string | null;
@@ -193,6 +194,7 @@ function mapRun(row: RunRow): RunRecord {
     bindingId: row.binding_id,
     telegramMessageId: row.telegram_message_id,
     prompt: row.prompt,
+    planMode: row.plan_mode === 1,
     status: row.status,
     codexRunId: row.codex_run_id,
     startedAt: row.started_at,
@@ -295,6 +297,7 @@ export class Storage {
         binding_id INTEGER NOT NULL REFERENCES topic_bindings(id) ON DELETE CASCADE,
         telegram_message_id INTEGER,
         prompt TEXT NOT NULL,
+        plan_mode INTEGER NOT NULL DEFAULT 0,
         status TEXT NOT NULL,
         codex_run_id TEXT,
         started_at TEXT,
@@ -366,6 +369,7 @@ export class Storage {
     this.addColumnIfMissing("topic_bindings", "model_service_tier", "TEXT");
     this.addColumnIfMissing("topic_bindings", "plan_mode", "INTEGER NOT NULL DEFAULT 0");
     this.addColumnIfMissing("topic_bindings", "token_usage_json", "TEXT");
+    this.addColumnIfMissing("runs", "plan_mode", "INTEGER NOT NULL DEFAULT 0");
   }
 
   prepareInterruptedRunsForResume(): InterruptedRunRecord[] {
@@ -540,12 +544,12 @@ export class Storage {
     this.db.prepare("DELETE FROM topic_bindings WHERE id = ?").run(bindingId);
   }
 
-  createRun(bindingId: number, telegramMessageId: number | null, prompt: string): RunRecord {
+  createRun(bindingId: number, telegramMessageId: number | null, prompt: string, planMode = false): RunRecord {
     const result = this.db
       .prepare(
-        "INSERT INTO runs (binding_id, telegram_message_id, prompt, status) VALUES (?, ?, ?, 'queued')",
+        "INSERT INTO runs (binding_id, telegram_message_id, prompt, plan_mode, status) VALUES (?, ?, ?, ?, 'queued')",
       )
-      .run(bindingId, telegramMessageId, prompt);
+      .run(bindingId, telegramMessageId, prompt, planMode ? 1 : 0);
     const run = this.getRun(Number(result.lastInsertRowid));
     if (!run) {
       throw new Error("Failed to load run after insert");
