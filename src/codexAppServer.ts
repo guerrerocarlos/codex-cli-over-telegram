@@ -1,7 +1,10 @@
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { AppServerClient } from "./appServerClient.js";
 import { AsyncQueue } from "./asyncQueue.js";
 import { describeCommandOutput } from "./commandOutput.js";
 import { PLAN_MODE_DEVELOPER_INSTRUCTIONS } from "./planMode.js";
+import type { AppConfig } from "./config.js";
 import type {
   CodexBackend,
   CodexRunEvent,
@@ -40,11 +43,15 @@ interface Notification {
 
 export class CodexAppServerBackend implements CodexBackend {
   private readonly active = new Map<number, ActiveTurn>();
+  private readonly managerBridgeMcpPath = path.join(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "managerBridgeMcp.js",
+  );
 
-  constructor(private readonly codexBin: string) {}
+  constructor(private readonly config: AppConfig) {}
 
   async *run(request: CodexRunRequest): AsyncIterable<CodexRunEvent> {
-    const client = new AppServerClient(this.codexBin);
+    const client = new AppServerClient(this.config.codexBin, this.appServerOptions(request));
     const events = new AsyncQueue<CodexRunEvent>();
     let finalMessage = "";
     let threadId = request.codexThreadId;
@@ -148,7 +155,7 @@ export class CodexAppServerBackend implements CodexBackend {
   }
 
   async compactThread(threadId: string): Promise<void> {
-    const client = new AppServerClient(this.codexBin);
+    const client = new AppServerClient(this.config.codexBin, this.appServerOptions());
     let settled = false;
 
     try {
@@ -218,6 +225,31 @@ export class CodexAppServerBackend implements CodexBackend {
     } finally {
       client.close();
     }
+  }
+
+  private appServerOptions(request?: CodexRunRequest): { extraArgs: string[]; extraEnv: NodeJS.ProcessEnv } {
+    const bridgeHost = this.config.healthHost === "0.0.0.0" ? "127.0.0.1" : this.config.healthHost;
+    const bridgeUrl = `http://${bridgeHost}:${this.config.healthPort}/manager/queue-topic`;
+    const bridgeEnv: NodeJS.ProcessEnv = {
+      MANAGER_BRIDGE_URL: bridgeUrl,
+      MANAGER_BRIDGE_TOKEN: this.config.managerBridgeToken,
+    };
+    if (request?.messageThreadId === 0) {
+      bridgeEnv.MANAGER_BRIDGE_CHAT_ID = String(request.chatId);
+    }
+    return {
+      extraArgs: [
+        "-c",
+        `mcp_servers.telegram_manager.command=${JSON.stringify(process.execPath)}`,
+        "-c",
+        `mcp_servers.telegram_manager.args=${JSON.stringify([this.managerBridgeMcpPath])}`,
+        "-c",
+        "mcp_servers.telegram_manager.default_tools_approval_mode=\"auto\"",
+        "-c",
+        "mcp_servers.telegram_manager.tools.queue_topic.approval_mode=\"auto\"",
+      ],
+      extraEnv: bridgeEnv,
+    };
   }
 
   private async startOrResumeThread(

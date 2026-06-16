@@ -92,7 +92,7 @@ Normal messages in a bound chat/topic are sent to Codex. During an active app-se
 
 From topic 0, use `/create <folder>` to create a new folder inside `ALLOWED_REPO_ROOTS`, create a Telegram forum topic for it, and bind that new topic to the folder. If the folder already exists, the bot still creates and binds the topic and reports that it reused the existing folder. Relative paths are created under the first allowed root; `~/...` and absolute paths are accepted when they stay inside an allowed root. The bot must be allowed to manage forum topics, and `ALLOW_UNTHREADED_CHATS=true` is required when Telegram sends the general topic without a `message_thread_id`.
 
-Topic 0 also acts as the manager topic. Use `/dashboard` there to see worker-topic activity across the chat, `/topics` to list all bound topics, and `/todo` to show running, queued, and failed runs that need attention. Worker topics record queued, started, completed, and failed runs in an internal manager event log and also send compact visible reports back to topic 0. Ordinary text, `/ask`, and `/queue` from topic 0 go to a dedicated read-only manager Codex thread with a generated snapshot of topics, active work, recent failures, and recent manager events.
+Topic 0 also acts as the manager topic. Use `/dashboard` there to see worker-topic activity across the chat, `/topics` to list all bound topics, and `/todo` to show running, queued, and failed runs that need attention. Worker topics record queued, started, completed, and failed runs in an internal manager event log and also send compact visible reports back to topic 0. Ordinary text, `/ask`, and `/queue` from topic 0 go to a dedicated read-only manager Codex thread with a generated snapshot of topics, active work, recent failures, and recent manager events. In app-server mode, that manager thread also gets a local `telegram_manager.queue_topic` MCP tool so it can queue work directly instead of telling you to run `/queue_topic` yourself.
 
 The bot publishes its slash-command menu to Telegram on startup, so newly added commands may require a service restart before they appear in Telegram's `/` picker.
 
@@ -210,6 +210,7 @@ FFMPEG_BIN=ffmpeg
 HEALTH_HOST=127.0.0.1
 HEALTH_PORT=8787
 MANAGER_REPO_PATH=~/topic-zero
+MANAGER_BRIDGE_TOKEN=
 ```
 
 Then lock it down:

@@ -54,6 +54,8 @@ export interface InterruptedRunRecord extends RunRecord {
 
 export interface CodexRunRequest {
   bindingId: number;
+  chatId: number;
+  messageThreadId: number;
   repoPath: string;
   prompt: string;
   codexThreadId: string | null;

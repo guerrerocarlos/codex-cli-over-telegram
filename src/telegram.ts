@@ -28,7 +28,7 @@ import {
   type TelegramFileRef,
 } from "./telegramMedia.js";
 
-interface TopicRef {
+export interface TopicRef {
   chatId: number;
   messageThreadId: number;
 }
@@ -72,6 +72,7 @@ interface HandlePromptOptions {
 
 interface CreateTelegramBotOptions {
   recoverRuns?: InterruptedRunRecord[];
+  queue?: RunQueue;
 }
 
 interface ContextFilePrompt {
@@ -91,7 +92,7 @@ export function createTelegramBot(
   options: CreateTelegramBotOptions = {},
 ): Bot {
   const bot = new Bot(config.telegramBotToken);
-  const queue = new RunQueue(config.maxParallelRuns);
+  const queue = options.queue ?? new RunQueue(config.maxParallelRuns);
   const sendQueue = sendQueueFor(config);
 
   bot.use(async (ctx, next) => {
@@ -987,25 +988,60 @@ async function handleManagerQueueTopicCommand(
     return;
   }
 
-  const request = parseManagerQueueTopicRequest(input);
+  const result = await queueManagerTopicRun({
+    storage,
+    bot,
+    config,
+    codex,
+    queue,
+    managerTopic: topic,
+    telegramUserId: ctx.from?.id ?? null,
+    input,
+    replyToMessageId: null,
+  });
+  await reply(ctx, result.message, config);
+}
+
+export interface QueueManagerTopicRunInput {
+  storage: Storage;
+  bot: Bot;
+  config: AppConfig;
+  codex: CodexBackend;
+  queue: RunQueue;
+  managerTopic: TopicRef;
+  telegramUserId: number | null;
+  input: string;
+  replyToMessageId: number | null;
+}
+
+export interface QueueManagerTopicRunResult {
+  ok: boolean;
+  message: string;
+  runId?: number;
+  topicId?: number;
+  topicName?: string;
+  repoPath?: string;
+  queuedBehind?: number;
+}
+
+export async function queueManagerTopicRun(input: QueueManagerTopicRunInput): Promise<QueueManagerTopicRunResult> {
+  const { storage, bot, config, codex, queue, managerTopic, telegramUserId } = input;
+  const request = parseManagerQueueTopicRequest(input.input);
   if (!request) {
-    await reply(ctx, "Usage: /queue_topic <topic-id-or-name> <prompt>", config);
-    return;
+    return { ok: false, message: "Usage: /queue_topic <topic-id-or-name> <prompt>" };
   }
 
-  const binding = findManagerTargetBinding(storage, topic.chatId, request.selector);
+  const binding = findManagerTargetBinding(storage, managerTopic.chatId, request.selector);
   if (!binding) {
-    await reply(
-      ctx,
-      [
+    return {
+      ok: false,
+      message: [
         `Could not find managed topic: ${request.selector}`,
         "",
         "Known topics:",
-        codeBlock(managerTopicSelectorList(storage, topic.chatId)),
+        codeBlock(managerTopicSelectorList(storage, managerTopic.chatId)),
       ].join("\n"),
-      config,
-    );
-    return;
+    };
   }
 
   const key = topicKey(binding.chatId, binding.messageThreadId);
@@ -1031,9 +1067,9 @@ async function handleManagerQueueTopicCommand(
     },
   });
   storage.audit({
-    telegramUserId: ctx.from?.id ?? null,
-    chatId: topic.chatId,
-    messageThreadId: topic.messageThreadId,
+    telegramUserId,
+    chatId: managerTopic.chatId,
+    messageThreadId: managerTopic.messageThreadId,
     eventType: "manager_queue_topic",
     details: {
       targetMessageThreadId: binding.messageThreadId,
@@ -1043,15 +1079,6 @@ async function handleManagerQueueTopicCommand(
     },
   });
 
-  await reply(
-    ctx,
-    [
-      `Queued run #${run.id} in ${topicDisplayName(binding)}.`,
-      `Topic: ${binding.messageThreadId}`,
-      queuedBehind > 0 ? `Behind ${queuedBehind} active/queued run(s).` : "It will start when a worker slot is available.",
-    ].join("\n"),
-    config,
-  );
   await sendText(
     bot,
     config,
@@ -1062,7 +1089,7 @@ async function handleManagerQueueTopicCommand(
       "Prompt:",
       codeBlock(request.prompt),
     ].join("\n"),
-    { notify: true },
+    { notify: true, replyToMessageId: input.replyToMessageId },
   );
 
   queue.enqueue(key, async () => {
@@ -1073,6 +1100,20 @@ async function handleManagerQueueTopicCommand(
     }
     await executeRun(bot, config, storage, codex, freshBinding, run, request.prompt);
   });
+
+  return {
+    ok: true,
+    message: [
+      `Queued run #${run.id} in ${topicDisplayName(binding)}.`,
+      `Topic: ${binding.messageThreadId}`,
+      queuedBehind > 0 ? `Behind ${queuedBehind} active/queued run(s).` : "It will start when a worker slot is available.",
+    ].join("\n"),
+    runId: run.id,
+    topicId: binding.messageThreadId,
+    topicName: topicDisplayName(binding),
+    repoPath: binding.repoPath,
+    queuedBehind,
+  };
 }
 
 interface ManagerQueueTopicRequest {
@@ -1396,6 +1437,8 @@ async function executeRun(
 
     for await (const event of codex.run({
       bindingId: binding.id,
+      chatId: binding.chatId,
+      messageThreadId: binding.messageThreadId,
       repoPath: binding.repoPath,
       prompt,
       codexThreadId: binding.codexThreadId,
@@ -2092,7 +2135,8 @@ function managerPromptText(storage: Storage, chatId: number, userText: string): 
   return [
     "You are the topic-zero manager for Codex CLI over Telegram.",
     "Help organize work across worker topics, identify blockers, suggest priorities, and summarize what has happened.",
-    "Do not claim you changed worker topics unless the provided context says that happened. If the user asks you to assign or queue work, explain the exact Telegram command they should use unless a manager command exists for it.",
+    "If the user asks you to assign or queue work and one managed topic is a clear target, call the telegram_manager.queue_topic tool. Do not tell the user to run /queue_topic or /assign when the tool is available.",
+    "Do not claim you changed worker topics unless the provided context or tool result says that happened.",
     "",
     "Current user request:",
     userText,

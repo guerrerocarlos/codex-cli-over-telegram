@@ -24,6 +24,11 @@ interface JsonRpcServerRequest {
 type NotificationHandler = (message: JsonRpcNotification) => void;
 type ServerRequestHandler = (message: JsonRpcServerRequest, client: AppServerClient) => void;
 
+export interface AppServerClientOptions {
+  extraArgs?: string[];
+  extraEnv?: NodeJS.ProcessEnv;
+}
+
 export class AppServerClient {
   private readonly proc: ChildProcessWithoutNullStreams;
   private readonly pending = new Map<
@@ -35,10 +40,10 @@ export class AppServerClient {
   private nextId = 1;
   private closed = false;
 
-  constructor(private readonly codexBin: string) {
-    this.proc = spawn(codexBin, ["app-server"], {
+  constructor(private readonly codexBin: string, options: AppServerClientOptions = {}) {
+    this.proc = spawn(codexBin, ["app-server", ...(options.extraArgs ?? [])], {
       stdio: ["pipe", "pipe", "pipe"],
-      env: process.env,
+      env: { ...process.env, ...(options.extraEnv ?? {}) },
     });
 
     this.proc.stderr.on("data", (data: Buffer) => {

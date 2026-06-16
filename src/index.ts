@@ -3,7 +3,8 @@ import { loadConfig } from "./config.js";
 import { Storage } from "./storage.js";
 import { CodexAppServerBackend } from "./codexAppServer.js";
 import { CodexExecBackend } from "./codexExec.js";
-import { createTelegramBot, telegramCommandMenu } from "./telegram.js";
+import { RunQueue } from "./runQueue.js";
+import { createTelegramBot, queueManagerTopicRun, telegramCommandMenu } from "./telegram.js";
 import { startHealthServer } from "./health.js";
 import { logger } from "./logger.js";
 
@@ -11,13 +12,25 @@ async function main(): Promise<void> {
   const config = loadConfig();
   const storage = new Storage(config.databasePath);
   const interruptedRuns = storage.prepareInterruptedRunsForResume();
-
-  const healthServer = startHealthServer(config);
+  const queue = new RunQueue(config.maxParallelRuns);
   const codex =
     config.codexBackend === "app-server"
-      ? new CodexAppServerBackend(config.codexBin)
+      ? new CodexAppServerBackend(config)
       : new CodexExecBackend(config.codexBin);
-  const bot = createTelegramBot(config, storage, codex, { recoverRuns: interruptedRuns });
+  const healthServer = startHealthServer(config, async (request) =>
+    queueManagerTopicRun({
+      storage,
+      bot,
+      config,
+      codex,
+      queue,
+      managerTopic: { chatId: request.chatId, messageThreadId: 0 },
+      telegramUserId: null,
+      input: `${request.selector} ${request.prompt}`,
+      replyToMessageId: null,
+    }),
+  );
+  const bot = createTelegramBot(config, storage, codex, { recoverRuns: interruptedRuns, queue });
 
   const shutdown = async (signal: string) => {
     logger.info("shutting down", { signal });
