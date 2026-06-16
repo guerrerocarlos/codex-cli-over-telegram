@@ -13,6 +13,7 @@ export interface TopicBinding {
   codexThreadId: string | null;
   modelProvider: ModelProvider;
   model: string | null;
+  modelServiceTier: string | null;
   planMode: boolean;
   sandboxMode: SandboxMode;
   approvalPolicy: "never";
@@ -64,6 +65,7 @@ export interface CodexRunRequest {
   codexThreadId: string | null;
   modelProvider: ModelProvider;
   model: string | null;
+  modelServiceTier: string | null;
   planMode: boolean;
   sandboxMode: SandboxMode;
   approvalPolicy: "never";

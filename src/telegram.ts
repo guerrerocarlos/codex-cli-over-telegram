@@ -342,7 +342,7 @@ export function createTelegramBot(
           `Current: ${await modelLabel(config, binding)}`,
           "Tap a button to set this topic's provider and model.",
         ].join("\n"),
-        modelKeyboard(models, binding.modelProvider, binding.model),
+        modelKeyboard(models, binding.modelProvider, binding.model, binding.modelServiceTier),
       );
     } catch (error) {
       await reply(ctx, `Could not list models:\n${codeBlock(errorMessage(error))}`, config);
@@ -379,7 +379,7 @@ export function createTelegramBot(
       const models = requested.explicitProvider
         ? await listModelOptions(config, requested.provider)
         : await listAllModelOptions(config);
-      const match = findModelMatch(models, requested.model, binding.modelProvider);
+      const match = findModelMatch(models, requested.model, binding.modelProvider, requested.serviceTier);
       if (!match) {
         await reply(
           ctx,
@@ -389,17 +389,17 @@ export function createTelegramBot(
         return;
       }
 
-      storage.updateBindingModelSelection(binding.id, match.provider, match.model);
+      storage.updateBindingModelSelection(binding.id, match.provider, match.model, match.serviceTier ?? null);
       storage.audit({
         telegramUserId: ctx.from?.id ?? null,
         chatId: binding.chatId,
         messageThreadId: binding.messageThreadId,
         eventType: "model",
-        details: { modelProvider: match.provider, model: match.model },
+        details: { modelProvider: match.provider, model: match.model, serviceTier: match.serviceTier ?? null },
       });
       await reply(
         ctx,
-        [`Topic model set to:`, codeBlock(`${providerLabel(match.provider)} / ${match.model}`), "", "The next run will use the new model in this thread."].join("\n"),
+        [`Topic model set to:`, codeBlock(modelSelectionLabel(match)), "", "The next run will use the new model in this thread."].join("\n"),
         config,
       );
     } catch (error) {
@@ -473,25 +473,25 @@ export function createTelegramBot(
     const requested = parseRequestedModel(binding.modelProvider, data.slice("model:set:".length));
     try {
       const models = await listModelOptions(config, requested.provider);
-      const match = models.find((model) => model.model === requested.model || model.id === requested.model);
+      const match = findModelMatch(models, requested.model, binding.modelProvider, requested.serviceTier);
       if (!match) {
         await ctx.answerCallbackQuery({ text: "Unknown model.", show_alert: true });
         await sendModelSwitcher(ctx, config, binding);
         return;
       }
 
-      storage.updateBindingModelSelection(binding.id, match.provider, match.model);
+      storage.updateBindingModelSelection(binding.id, match.provider, match.model, match.serviceTier ?? null);
       storage.audit({
         telegramUserId: ctx.from?.id ?? null,
         chatId: binding.chatId,
         messageThreadId: binding.messageThreadId,
         eventType: "model",
-        details: { modelProvider: match.provider, model: match.model },
+        details: { modelProvider: match.provider, model: match.model, serviceTier: match.serviceTier ?? null },
       });
       await ctx.answerCallbackQuery({ text: `Model set to ${match.model}.` });
       await reply(
         ctx,
-        [`Topic model set to:`, codeBlock(`${providerLabel(match.provider)} / ${match.model}`), "", "The next run will use the new model in this thread."].join("\n"),
+        [`Topic model set to:`, codeBlock(modelSelectionLabel(match)), "", "The next run will use the new model in this thread."].join("\n"),
         config,
       );
     } catch (error) {
@@ -1594,6 +1594,7 @@ async function executeRun(
       approvalPolicy: binding.approvalPolicy,
       modelProvider: binding.modelProvider,
       model: binding.model,
+      modelServiceTier: binding.modelServiceTier,
       planMode: binding.planMode,
     })) {
       if (event.type === "started" && event.threadId) {
@@ -1977,7 +1978,7 @@ async function sendModelSwitcher(ctx: Context, config: AppConfig, binding: Topic
         `Current: ${await modelLabel(config, binding)}`,
         "The next run will use the selected provider and model in this thread.",
       ].join("\n"),
-      modelKeyboard(models, binding.modelProvider, binding.model),
+      modelKeyboard(models, binding.modelProvider, binding.model, binding.modelServiceTier),
     );
   } catch (error) {
     await reply(ctx, `Could not list models:\n${codeBlock(errorMessage(error))}`, config);
@@ -1988,6 +1989,7 @@ interface ModelOption {
   provider: ModelProvider;
   id: string;
   model: string;
+  serviceTier: string | null;
   displayName: string;
 }
 
@@ -1997,12 +1999,27 @@ async function listModelOptions(config: AppConfig, provider: ModelProvider): Pro
   }
 
   const models = await listCodexModels(config.codexBin);
-  return models.map((model) => ({
-    provider: "openai",
-    id: model.id,
-    model: model.model,
-    displayName: model.displayName || model.model,
-  }));
+  return models.flatMap((model) => {
+    const baseOption = {
+      provider: "openai" as const,
+      id: model.id,
+      model: model.model,
+      serviceTier: null,
+      displayName: model.displayName || model.model,
+    };
+    if (!config.openaiTieredModels.includes(model.model)) {
+      return [baseOption];
+    }
+    return [
+      baseOption,
+      ...config.openaiServiceTiers.map((serviceTier) => ({
+        ...baseOption,
+        id: `openai:${model.model}:${serviceTier}`,
+        serviceTier,
+        displayName: `${baseOption.displayName} (${serviceTier})`,
+      })),
+    ];
+  });
 }
 
 async function listAllModelOptions(config: AppConfig): Promise<ModelOption[]> {
@@ -2016,42 +2033,72 @@ async function listAllModelOptions(config: AppConfig): Promise<ModelOption[]> {
 function parseRequestedModel(
   currentProvider: ModelProvider,
   input: string,
-): { provider: ModelProvider; model: string; explicitProvider: boolean } {
+): { provider: ModelProvider; model: string; serviceTier: string | null; explicitProvider: boolean } {
   const [prefix, ...rest] = input.split(":");
   if (prefix && rest.length > 0) {
     const provider = providerFromAlias(prefix);
     if (provider) {
-      return { provider, model: rest.join(":").trim(), explicitProvider: true };
+      const [model, serviceTier] = rest.join(":").split(/\s+/, 2);
+      return {
+        provider,
+        model: (model ?? "").trim(),
+        serviceTier: serviceTier?.trim() || null,
+        explicitProvider: true,
+      };
     }
   }
-  return { provider: currentProvider, model: input.trim(), explicitProvider: false };
+  const [model, serviceTier] = input.split(/\s+/, 2);
+  return {
+    provider: currentProvider,
+    model: (model ?? "").trim(),
+    serviceTier: serviceTier?.trim() || null,
+    explicitProvider: false,
+  };
 }
 
-function findModelMatch(models: ModelOption[], requestedModel: string, currentProvider: ModelProvider): ModelOption | undefined {
+function findModelMatch(
+  models: ModelOption[],
+  requestedModel: string,
+  currentProvider: ModelProvider,
+  requestedServiceTier: string | null,
+): ModelOption | undefined {
+  const matchesRequested = (model: ModelOption) =>
+    (model.model === requestedModel || model.id === requestedModel) &&
+    (!requestedServiceTier || model.serviceTier === requestedServiceTier);
   return (
     models.find(
-      (model) =>
-        model.provider === currentProvider &&
-        (model.model === requestedModel || model.id === requestedModel),
-    ) ?? models.find((model) => model.model === requestedModel || model.id === requestedModel)
+      (model) => model.provider === currentProvider && matchesRequested(model),
+    ) ?? models.find(matchesRequested)
   );
 }
 
-function modelKeyboard(models: ModelOption[], currentProvider: ModelProvider, currentModel: string | null): InlineKeyboard {
+function modelKeyboard(
+  models: ModelOption[],
+  currentProvider: ModelProvider,
+  currentModel: string | null,
+  currentServiceTier: string | null,
+): InlineKeyboard {
   const keyboard = new InlineKeyboard();
   keyboard.text(`${currentModel === null ? "Default (current)" : "Default"}`, "model:default").row();
 
   for (const model of models) {
-    const callbackData = `model:set:${model.provider}:${model.model}`;
+    const callbackData = `model:set:${model.provider}:${model.model}${model.serviceTier ? ` ${model.serviceTier}` : ""}`;
     if (callbackData.length > 64) {
       continue;
     }
-    const isCurrent = currentProvider === model.provider && currentModel === model.model;
+    const isCurrent =
+      currentProvider === model.provider &&
+      currentModel === model.model &&
+      currentServiceTier === model.serviceTier;
     const label = `${providerLabel(model.provider)}: ${model.displayName || model.model}${isCurrent ? " (current)" : ""}`;
     keyboard.text(label.slice(0, 56), callbackData).row();
   }
 
   return keyboard;
+}
+
+function modelSelectionLabel(model: ModelOption): string {
+  return `${providerLabel(model.provider)} / ${model.model}${model.serviceTier ? ` (${model.serviceTier})` : ""}`;
 }
 
 async function pinRunMessage(bot: Bot, binding: TopicBinding, run: RunRecord): Promise<void> {
@@ -2335,7 +2382,7 @@ function oneLine(value: string, maxLength: number): string {
 
 async function modelLabel(config: AppConfig, binding: TopicBinding): Promise<string> {
   if (binding.model) {
-    return `${providerLabel(binding.modelProvider)} / ${binding.model} (topic)`;
+    return `${providerLabel(binding.modelProvider)} / ${binding.model}${binding.modelServiceTier ? ` (${binding.modelServiceTier})` : ""} (topic)`;
   }
   if (binding.modelProvider === "xai") {
     return `${providerLabel(binding.modelProvider)} / (provider default)`;

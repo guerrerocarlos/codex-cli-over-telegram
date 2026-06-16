@@ -31,6 +31,8 @@ ALLOWED_REPO_ROOTS=/home/you
 DATABASE_PATH=./state.sqlite
 CODEX_BACKEND=app-server
 DEFAULT_MODEL_PROVIDER=openai
+OPENAI_TIERED_MODELS=gpt-5.5
+OPENAI_SERVICE_TIERS=fast,flex
 XAI_MODELS=grok-build-0.1,grok-4.3
 GROK_AGENT_COMMAND=grok
 GROK_AGENT_ARGS=agent,stdio
@@ -85,6 +87,7 @@ Useful commands:
 /models
 /model
 /model gpt-5.5
+/model gpt-5.5 fast
 /model xai:grok-build-0.1
 /plan on
 /plan off
@@ -214,6 +217,8 @@ DATABASE_PATH=/path/to/service-home/.local/state/codex-cli-over-telegram/state.s
 CODEX_BIN=codex
 CODEX_BACKEND=app-server
 DEFAULT_MODEL_PROVIDER=openai
+OPENAI_TIERED_MODELS=gpt-5.5
+OPENAI_SERVICE_TIERS=fast,flex
 XAI_MODELS=grok-build-0.1,grok-4.3
 GROK_AGENT_COMMAND=/home/gnu/.local/bin/grok
 GROK_AGENT_ARGS=agent,stdio

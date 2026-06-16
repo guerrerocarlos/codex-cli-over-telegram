@@ -5,6 +5,7 @@ export interface ProviderModelOption {
   provider: ModelProvider;
   id: string;
   model: string;
+  serviceTier: string | null;
   displayName: string;
 }
 
@@ -28,6 +29,7 @@ export function xaiModelOptions(config: AppConfig): ProviderModelOption[] {
     provider: "xai",
     id: `xai:${model}`,
     model,
+    serviceTier: null,
     displayName: model,
   }));
 }
@@ -49,4 +51,8 @@ export function codexProviderArgs(config: AppConfig, provider: ModelProvider): s
     "-c",
     `model_providers.${config.xaiProviderId}.wire_api="responses"`,
   ];
+}
+
+export function codexServiceTierArgs(serviceTier: string | null): string[] {
+  return serviceTier ? ["-c", `service_tier=${JSON.stringify(serviceTier)}`] : [];
 }

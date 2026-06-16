@@ -20,6 +20,8 @@ export interface AppConfig {
   xaiBaseUrl: string;
   xaiApiKeyEnv: string;
   xaiModels: string[];
+  openaiTieredModels: string[];
+  openaiServiceTiers: string[];
   grokAgentCommand: string;
   grokAgentArgs: string[];
   defaultSandboxMode: SandboxMode;
@@ -171,6 +173,8 @@ export function loadConfig(): AppConfig {
     xaiBaseUrl: optional("XAI_BASE_URL", "https://api.x.ai/v1"),
     xaiApiKeyEnv: optional("XAI_API_KEY_ENV", "XAI_API_KEY"),
     xaiModels: parseStringList("XAI_MODELS", "grok-4.3,grok-build-0.1"),
+    openaiTieredModels: parseStringList("OPENAI_TIERED_MODELS", "gpt-5.5"),
+    openaiServiceTiers: parseStringList("OPENAI_SERVICE_TIERS", "fast,flex"),
     grokAgentCommand: optional("GROK_AGENT_COMMAND", "grok"),
     grokAgentArgs: parseStringList("GROK_AGENT_ARGS", "agent,stdio"),
     defaultSandboxMode: parseSandboxMode(),

@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import { AppServerClient } from "./appServerClient.js";
 import { AsyncQueue } from "./asyncQueue.js";
 import { describeCommandOutput } from "./commandOutput.js";
-import { codexProviderArgs } from "./modelProviders.js";
+import { codexProviderArgs, codexServiceTierArgs } from "./modelProviders.js";
 import { PLAN_MODE_DEVELOPER_INSTRUCTIONS } from "./planMode.js";
 import type { AppConfig } from "./config.js";
 import type {
@@ -253,6 +253,9 @@ export class CodexAppServerBackend implements CodexBackend {
         "-c",
         "mcp_servers.telegram_manager.tools.queue_topic.approval_mode=\"auto\"",
         ...codexProviderArgs(this.config, request?.modelProvider ?? this.config.defaultModelProvider),
+        ...codexServiceTierArgs(
+          request?.modelProvider === "openai" ? request.modelServiceTier : null,
+        ),
       ],
       extraEnv: bridgeEnv,
     };

@@ -18,6 +18,7 @@ interface BindingRow {
   codex_thread_id: string | null;
   model_provider: ModelProvider | null;
   model: string | null;
+  model_service_tier: string | null;
   plan_mode: number;
   sandbox_mode: SandboxMode;
   approval_policy: "never";
@@ -156,6 +157,7 @@ function mapBinding(row: BindingRow): TopicBinding {
     codexThreadId: row.codex_thread_id,
     modelProvider: normalizeModelProvider(row.model_provider),
     model: row.model,
+    modelServiceTier: row.model_service_tier,
     planMode: row.plan_mode === 1,
     sandboxMode: row.sandbox_mode,
     approvalPolicy: row.approval_policy,
@@ -274,6 +276,7 @@ export class Storage {
         codex_thread_id TEXT,
         model_provider TEXT NOT NULL DEFAULT 'openai',
         model TEXT,
+        model_service_tier TEXT,
         plan_mode INTEGER NOT NULL DEFAULT 0,
         sandbox_mode TEXT NOT NULL DEFAULT 'read-only',
         approval_policy TEXT NOT NULL DEFAULT 'never',
@@ -357,6 +360,7 @@ export class Storage {
 
     this.addColumnIfMissing("topic_bindings", "model", "TEXT");
     this.addColumnIfMissing("topic_bindings", "model_provider", "TEXT NOT NULL DEFAULT 'openai'");
+    this.addColumnIfMissing("topic_bindings", "model_service_tier", "TEXT");
     this.addColumnIfMissing("topic_bindings", "plan_mode", "INTEGER NOT NULL DEFAULT 0");
     this.addColumnIfMissing("topic_bindings", "token_usage_json", "TEXT");
   }
@@ -475,14 +479,19 @@ export class Storage {
 
   updateBindingModel(bindingId: number, model: string | null): void {
     this.db
-      .prepare("UPDATE topic_bindings SET model = ?, updated_at = ? WHERE id = ?")
+      .prepare("UPDATE topic_bindings SET model = ?, model_service_tier = NULL, updated_at = ? WHERE id = ?")
       .run(model, now(), bindingId);
   }
 
-  updateBindingModelSelection(bindingId: number, modelProvider: ModelProvider, model: string | null): void {
+  updateBindingModelSelection(
+    bindingId: number,
+    modelProvider: ModelProvider,
+    model: string | null,
+    modelServiceTier: string | null = null,
+  ): void {
     this.db
-      .prepare("UPDATE topic_bindings SET model_provider = ?, model = ?, updated_at = ? WHERE id = ?")
-      .run(modelProvider, model, now(), bindingId);
+      .prepare("UPDATE topic_bindings SET model_provider = ?, model = ?, model_service_tier = ?, updated_at = ? WHERE id = ?")
+      .run(modelProvider, model, modelServiceTier, now(), bindingId);
   }
 
   updateBindingPlanMode(bindingId: number, planMode: boolean): void {
