@@ -29,6 +29,9 @@ export interface AppConfig {
   maxParallelRuns: number;
   maxTelegramMessageChars: number;
   telegramSendIntervalMs: number;
+  telegramAgentStreaming: boolean;
+  telegramStreamFlushMs: number;
+  telegramStreamMinChars: number;
   maxTelegramFileBytes: number;
   openaiApiKey: string | null;
   openaiTranscriptionModel: string;
@@ -182,6 +185,9 @@ export function loadConfig(): AppConfig {
     maxParallelRuns: parseInteger("MAX_PARALLEL_RUNS", 4),
     maxTelegramMessageChars: parseInteger("MAX_TELEGRAM_MESSAGE_CHARS", 3500),
     telegramSendIntervalMs: parseInteger("TELEGRAM_SEND_INTERVAL_MS", 1500),
+    telegramAgentStreaming: parseBoolean("TELEGRAM_AGENT_STREAMING", true),
+    telegramStreamFlushMs: parseInteger("TELEGRAM_STREAM_FLUSH_MS", 1000),
+    telegramStreamMinChars: parseInteger("TELEGRAM_STREAM_MIN_CHARS", 120),
     maxTelegramFileBytes: parseInteger("MAX_TELEGRAM_FILE_BYTES", 20 * 1024 * 1024),
     openaiApiKey: process.env.OPENAI_API_KEY?.trim() || null,
     openaiTranscriptionModel: optional("OPENAI_TRANSCRIPTION_MODEL", "gpt-4o-transcribe"),

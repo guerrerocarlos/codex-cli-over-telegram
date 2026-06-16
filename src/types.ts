@@ -78,6 +78,7 @@ export type CodexRunEvent =
   | { type: "command_started"; text: string }
   | { type: "command_completed"; text: string }
   | { type: "file_changed"; text: string }
+  | { type: "agent_message_delta"; text: string; messageId?: string | null }
   | { type: "agent_message"; text: string }
   | { type: "completed"; finalMessage?: string }
   | { type: "failed"; error: string; exitCode?: number };

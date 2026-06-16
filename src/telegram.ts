@@ -29,6 +29,7 @@ import {
 import { providerFromAlias, providerLabel, xaiModelOptions } from "./modelProviders.js";
 import { logger } from "./logger.js";
 import { TelegramSendQueue } from "./telegramSendQueue.js";
+import { TelegramRichDraftStreamer } from "./telegramRichStream.js";
 import {
   saveTelegramFileToContext,
   saveTranscriptForAudio,
@@ -1555,6 +1556,7 @@ async function executeRun(
   let finalMessage = "";
   let lastSentAgentMessage = "";
   let lastProgressAt = 0;
+  let richStreamer: TelegramRichDraftStreamer | null = null;
 
   try {
     const sandboxMode = effectiveRunSandboxMode(config, binding);
@@ -1617,6 +1619,15 @@ async function executeRun(
         continue;
       }
 
+      if (event.type === "agent_message_delta") {
+        if (config.telegramAgentStreaming && binding.modelProvider === "xai") {
+          richStreamer ??= new TelegramRichDraftStreamer(config, binding);
+          richStreamer.append(event.text);
+          await richStreamer.flush();
+        }
+        continue;
+      }
+
       if (event.type === "command_started") {
         await sendText(bot, config, binding, codeBlock(truncateText(event.text, 900), "bash"));
         continue;
@@ -1662,13 +1673,17 @@ async function executeRun(
 
     const completionMessage = finalMessage || "Codex completed without a final message.";
     storage.completeRun(run.id, completionMessage);
-    await sendText(
-      bot,
-      config,
-      binding,
-      completionMessage === lastSentAgentMessage ? "Done." : completionMessage,
-      terminalRunSendOptions(run),
-    );
+    if (richStreamer && (await richStreamer.finish(completionMessage))) {
+      lastSentAgentMessage = completionMessage;
+    } else {
+      await sendText(
+        bot,
+        config,
+        binding,
+        completionMessage === lastSentAgentMessage ? "Done." : completionMessage,
+        terminalRunSendOptions(run),
+      );
+    }
   } catch (error) {
     const message = errorMessage(error);
     storage.failRun(run.id, message);

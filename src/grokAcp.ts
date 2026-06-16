@@ -173,6 +173,7 @@ class TelegramAcpClient {
           const text = `${this.agentMessages.get(messageId) ?? ""}${update.content.text}`;
           this.agentMessages.set(messageId, text);
           this.onAgentMessage([...this.agentMessages.values()].join("\n\n"));
+          this.events.push({ type: "agent_message_delta", text: update.content.text, messageId });
         }
         return;
       case "agent_thought_chunk":
