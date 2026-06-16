@@ -13,13 +13,27 @@ unit_source="${UNIT_SOURCE:-deploy/systemd/codex-cli-over-telegram.service}"
 unit_path="/etc/systemd/system/$service_name.service"
 service_home="$(getent passwd "$service_user" | cut -d: -f6)"
 read_write_paths="${READ_WRITE_PATHS:-$service_home}"
+source_dir="$(pwd -P)"
+app_dir_real="$app_dir"
+if [ -d "$app_dir" ]; then
+  app_dir_real="$(cd "$app_dir" && pwd -P)"
+fi
 
-npm ci
-npm test
-npm run build
+if [ "$(id -u)" -eq 0 ] && [ "$source_dir" = "$app_dir_real" ]; then
+  sudo chown -R "$service_user:$service_group" node_modules dist 2>/dev/null || true
+  sudo -u "$service_user" env HOME="$service_home" npm ci
+  sudo -u "$service_user" env HOME="$service_home" npm test
+  sudo -u "$service_user" env HOME="$service_home" npm run build
+  branch="$(sudo -u "$service_user" git rev-parse --abbrev-ref HEAD)"
+  commit_hash="$(sudo -u "$service_user" git rev-parse HEAD)"
+else
+  npm ci
+  npm test
+  npm run build
+  branch="$(git rev-parse --abbrev-ref HEAD)"
+  commit_hash="$(git rev-parse HEAD)"
+fi
 
-branch="$(git rev-parse --abbrev-ref HEAD)"
-commit_hash="$(git rev-parse HEAD)"
 deployed_at="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 
 sudo install -d -m 0755 -o "$service_user" -g "$service_group" "$app_dir"
@@ -37,8 +51,6 @@ if [ ! -f "$env_dir/env" ]; then
 
   sudo install -m 0640 -o root -g "$service_group" "$env_file_source" "$env_dir/env"
 fi
-source_dir="$(pwd -P)"
-app_dir_real="$(cd "$app_dir" && pwd -P)"
 sudo tee "$env_dir/deploy.env" >/dev/null <<EOF
 DEPLOY_BRANCH=$branch
 DEPLOY_COMMIT_HASH=$commit_hash
