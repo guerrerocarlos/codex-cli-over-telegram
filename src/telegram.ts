@@ -1011,13 +1011,25 @@ async function handleManagerQueueTopicCommand(
   const key = topicKey(binding.chatId, binding.messageThreadId);
   const queuedBehind = queue.depth(key);
   const run = storage.createRun(binding.id, null, request.prompt);
-  recordManagerRunEvent(
-    storage,
-    binding,
-    run,
-    "queued",
-    `Queued from topic zero${queuedBehind > 0 ? ` behind ${queuedBehind} active/queued run(s)` : ""}.`,
-  );
+  storage.addManagerEvent({
+    chatId: binding.chatId,
+    sourceMessageThreadId: binding.messageThreadId,
+    bindingId: binding.id,
+    runId: run.id,
+    eventType: "run_queued",
+    summary: managerEventSummary(
+      binding,
+      run,
+      "queued",
+      `Queued from topic zero${queuedBehind > 0 ? ` behind ${queuedBehind} active/queued run(s)` : ""}.`,
+    ),
+    details: {
+      topicName: topicDisplayName(binding),
+      repoPath: binding.repoPath,
+      prompt: run.prompt,
+      queuedBehind,
+    },
+  });
   storage.audit({
     telegramUserId: ctx.from?.id ?? null,
     chatId: topic.chatId,
@@ -1076,22 +1088,22 @@ function parseQueueTopicAlias(text: string): string | null {
 
   const idAlias = trimmed.match(/^#\s*([0-9]+)\s*[:\-]?\s*([\s\S]+)$/);
   if (idAlias) {
-    const selector = idAlias[1];
-    const prompt = idAlias[2].trim();
+    const selector = idAlias[1] ?? "";
+    const prompt = (idAlias[2] ?? "").trim();
     return prompt ? `${selector} ${prompt}` : null;
   }
 
   const quotedAlias = trimmed.match(/^(?:topic|to)\s+"([^"]+)"\s*[:\-]?\s*([\s\S]+)$/i);
   if (quotedAlias) {
-    const selector = quotedAlias[1].trim();
-    const prompt = quotedAlias[2].trim();
+    const selector = (quotedAlias[1] ?? "").trim();
+    const prompt = (quotedAlias[2] ?? "").trim();
     return prompt ? `"${selector}" ${prompt}` : null;
   }
 
   const simpleAlias = trimmed.match(/^(?:topic|to)\s+([A-Za-z0-9._-]+)\s*[:\-]?\s*([\s\S]+)$/i);
   if (simpleAlias) {
-    const selector = simpleAlias[1].trim();
-    const prompt = simpleAlias[2].trim();
+    const selector = (simpleAlias[1] ?? "").trim();
+    const prompt = (simpleAlias[2] ?? "").trim();
     return prompt ? `${selector} ${prompt}` : null;
   }
 
@@ -1106,8 +1118,8 @@ function parseManagerQueueTopicRequest(input: string): ManagerQueueTopicRequest 
 
   const quoted = trimmed.match(/^"([^"]+)"\s+([\s\S]+)\s*$/);
   if (quoted) {
-    const selector = quoted[1].trim();
-    const prompt = quoted[2].trim();
+    const selector = (quoted[1] ?? "").trim();
+    const prompt = (quoted[2] ?? "").trim();
     return prompt ? { selector, prompt } : null;
   }
 
@@ -1116,8 +1128,8 @@ function parseManagerQueueTopicRequest(input: string): ManagerQueueTopicRequest 
     return null;
   }
 
-  const selector = split[1].trim();
-  const prompt = split[2].trim();
+  const selector = (split[1] ?? "").trim();
+  const prompt = (split[2] ?? "").trim();
   if (!selector || !prompt) {
     return null;
   }
@@ -1131,7 +1143,7 @@ function parseEmbeddedManagerQueueCommand(text: string): string | null {
     return null;
   }
 
-  const extracted = match[2].trim();
+  const extracted = (match[2] ?? "").trim();
   return extracted.length > 0 ? extracted : null;
 }
 
@@ -1144,7 +1156,7 @@ function findManagerTargetBinding(storage: Storage, chatId: number, selector: st
   const normalizedSelector = selector.trim().toLowerCase();
   const numericMatch = normalizedSelector.match(/^\s*#?(\d+)\s*$/);
   if (numericMatch) {
-    const targetThreadId = Number.parseInt(numericMatch[1], 10);
+    const targetThreadId = Number.parseInt(numericMatch[1] ?? "", 10);
     return bindings.find((binding) => binding.messageThreadId === targetThreadId) ?? null;
   }
 
@@ -1168,7 +1180,7 @@ function findManagerTargetBinding(storage: Storage, chatId: number, selector: st
       path.basename(binding.repoPath).toLowerCase().startsWith(normalizedSelector),
   );
   if (startsWithMatches.length === 1) {
-    return startsWithMatches[0];
+    return startsWithMatches[0] ?? null;
   }
 
   return null;
@@ -1547,6 +1559,26 @@ function ensureManagerBinding(
 ): TopicBinding {
   const existing = storage.getBinding(topic.chatId, topic.messageThreadId);
   if (existing) {
+    if (existing.repoPath !== config.managerRepoPath || existing.topicName !== "manager") {
+      storage.updateBindingRepoPath(existing.id, config.managerRepoPath, "manager");
+      storage.audit({
+        telegramUserId: ctx.from?.id ?? null,
+        chatId: topic.chatId,
+        messageThreadId: topic.messageThreadId,
+        eventType: "manager_binding_repo_updated",
+        details: {
+          previousRepoPath: existing.repoPath,
+          previousTopicName: existing.topicName,
+          repoPath: config.managerRepoPath,
+          topicName: "manager",
+        },
+      });
+      const updated = storage.getBindingById(existing.id) ?? existing;
+      existing.repoPath = updated.repoPath;
+      existing.topicName = updated.topicName;
+      existing.codexThreadId = updated.codexThreadId;
+      existing.tokenUsage = updated.tokenUsage;
+    }
     if (existing.sandboxMode !== "read-only") {
       storage.updateBindingMode(existing.id, "read-only");
       return storage.getBindingById(existing.id) ?? existing;
@@ -1558,7 +1590,7 @@ function ensureManagerBinding(
     chatId: topic.chatId,
     messageThreadId: topic.messageThreadId,
     topicName: "manager",
-    repoPath: process.cwd(),
+    repoPath: config.managerRepoPath,
     createdByUserId: ctx.from?.id ?? 0,
     sandboxMode: "read-only",
   });

@@ -436,6 +436,14 @@ export class Storage {
       .run(status, now(), bindingId);
   }
 
+  updateBindingRepoPath(bindingId: number, repoPath: string, topicName: string | null = null): void {
+    this.db
+      .prepare(
+        "UPDATE topic_bindings SET repo_path = ?, topic_name = ?, codex_thread_id = NULL, token_usage_json = NULL, updated_at = ? WHERE id = ?",
+      )
+      .run(repoPath, topicName, now(), bindingId);
+  }
+
   deleteBinding(bindingId: number): void {
     this.db.prepare("DELETE FROM topic_bindings WHERE id = ?").run(bindingId);
   }

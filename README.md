@@ -209,6 +209,7 @@ OPENAI_TRANSCRIPTION_MODEL=gpt-4o-transcribe
 FFMPEG_BIN=ffmpeg
 HEALTH_HOST=127.0.0.1
 HEALTH_PORT=8787
+MANAGER_REPO_PATH=/home/you/codex-cli-over-telegram
 ```
 
 Then lock it down:

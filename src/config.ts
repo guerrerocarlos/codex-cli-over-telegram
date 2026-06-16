@@ -1,6 +1,7 @@
 import "dotenv/config";
 import path from "node:path";
 import { mkdirSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import type { SandboxMode } from "./types.js";
 
 export type CodexBackendKind = "app-server" | "exec";
@@ -25,10 +26,13 @@ export interface AppConfig {
   healthHost: string;
   healthPort: number;
   allowUnthreadedChats: boolean;
+  managerRepoPath: string;
   deployBranch: string;
   deployCommitHash: string;
   deployedAt: string;
 }
+
+const appRootPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 function required(name: string): string {
   const value = process.env[name]?.trim();
@@ -139,6 +143,7 @@ export function loadConfig(): AppConfig {
     healthHost: optional("HEALTH_HOST", "127.0.0.1"),
     healthPort: parseInteger("HEALTH_PORT", 8787),
     allowUnthreadedChats: parseBoolean("ALLOW_UNTHREADED_CHATS", false),
+    managerRepoPath: path.resolve(optional("MANAGER_REPO_PATH", appRootPath)),
     deployBranch: optional("DEPLOY_BRANCH", "unknown"),
     deployCommitHash: optional("DEPLOY_COMMIT_HASH", "unknown"),
     deployedAt: optional("DEPLOYED_AT", "unknown"),
