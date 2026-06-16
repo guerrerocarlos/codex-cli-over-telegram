@@ -1,5 +1,7 @@
 export type SandboxMode = "read-only" | "workspace-write" | "danger-full-access";
 
+export type ModelProvider = "openai" | "xai";
+
 export type RunStatus = "queued" | "running" | "completed" | "failed" | "stopped";
 
 export interface TopicBinding {
@@ -9,6 +11,7 @@ export interface TopicBinding {
   topicName: string | null;
   repoPath: string;
   codexThreadId: string | null;
+  modelProvider: ModelProvider;
   model: string | null;
   planMode: boolean;
   sandboxMode: SandboxMode;
@@ -59,6 +62,7 @@ export interface CodexRunRequest {
   repoPath: string;
   prompt: string;
   codexThreadId: string | null;
+  modelProvider: ModelProvider;
   model: string | null;
   planMode: boolean;
   sandboxMode: SandboxMode;

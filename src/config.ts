@@ -3,7 +3,7 @@ import { randomBytes } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { mkdirSync } from "node:fs";
-import type { SandboxMode } from "./types.js";
+import type { ModelProvider, SandboxMode } from "./types.js";
 
 export type CodexBackendKind = "app-server" | "exec";
 
@@ -15,6 +15,13 @@ export interface AppConfig {
   databasePath: string;
   codexBin: string;
   codexBackend: CodexBackendKind;
+  defaultModelProvider: ModelProvider;
+  xaiProviderId: string;
+  xaiBaseUrl: string;
+  xaiApiKeyEnv: string;
+  xaiModels: string[];
+  grokAgentCommand: string;
+  grokAgentArgs: string[];
   defaultSandboxMode: SandboxMode;
   alwaysYoloMode: boolean;
   maxParallelRuns: number;
@@ -109,6 +116,21 @@ function parseCodexBackend(): CodexBackendKind {
   throw new Error("CODEX_BACKEND must be app-server or exec");
 }
 
+function parseModelProvider(name: string, fallback: ModelProvider): ModelProvider {
+  const provider = optional(name, fallback);
+  if (provider === "openai" || provider === "xai") {
+    return provider;
+  }
+  throw new Error(`${name} must be openai or xai`);
+}
+
+function parseStringList(name: string, fallback: string): string[] {
+  return optional(name, fallback)
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
 function parseInteger(name: string, fallback: number): number {
   const raw = optional(name, String(fallback));
   const value = Number(raw);
@@ -144,6 +166,13 @@ export function loadConfig(): AppConfig {
     databasePath,
     codexBin: optional("CODEX_BIN", "codex"),
     codexBackend: parseCodexBackend(),
+    defaultModelProvider: parseModelProvider("DEFAULT_MODEL_PROVIDER", "openai"),
+    xaiProviderId: optional("XAI_CODEX_PROVIDER_ID", "xai"),
+    xaiBaseUrl: optional("XAI_BASE_URL", "https://api.x.ai/v1"),
+    xaiApiKeyEnv: optional("XAI_API_KEY_ENV", "XAI_API_KEY"),
+    xaiModels: parseStringList("XAI_MODELS", "grok-4.3,grok-build-0.1"),
+    grokAgentCommand: optional("GROK_AGENT_COMMAND", "grok"),
+    grokAgentArgs: parseStringList("GROK_AGENT_ARGS", "agent,stdio"),
     defaultSandboxMode: parseSandboxMode(),
     alwaysYoloMode: parseBoolean("CODEX_ALWAYS_YOLO", false),
     maxParallelRuns: parseInteger("MAX_PARALLEL_RUNS", 4),

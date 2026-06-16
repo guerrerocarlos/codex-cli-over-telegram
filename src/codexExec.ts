@@ -1,6 +1,8 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import readline from "node:readline";
 import { describeCommandOutput } from "./commandOutput.js";
+import type { AppConfig } from "./config.js";
+import { codexProviderArgs } from "./modelProviders.js";
 import { PLAN_MODE_DEVELOPER_INSTRUCTIONS } from "./planMode.js";
 import type { CodexBackend, CodexRunEvent, CodexRunRequest } from "./types.js";
 import { logger } from "./logger.js";
@@ -29,7 +31,7 @@ interface JsonEvent {
 export class CodexExecBackend implements CodexBackend {
   private readonly active = new Map<number, ChildProcess>();
 
-  constructor(private readonly codexBin: string) {}
+  constructor(private readonly config: AppConfig) {}
 
   async *run(request: CodexRunRequest): AsyncIterable<CodexRunEvent> {
     const args = [
@@ -42,6 +44,7 @@ export class CodexExecBackend implements CodexBackend {
       request.sandboxMode,
       "-c",
       `approval_policy="${request.approvalPolicy}"`,
+      ...codexProviderArgs(this.config, request.modelProvider),
     ];
 
     if (request.model) {
@@ -57,7 +60,7 @@ export class CodexExecBackend implements CodexBackend {
       args.push(request.prompt);
     }
 
-    const child = spawn(this.codexBin, args, {
+    const child = spawn(this.config.codexBin, args, {
       cwd: request.repoPath,
       env: process.env,
       detached: process.platform !== "win32",

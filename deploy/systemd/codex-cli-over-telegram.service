@@ -9,6 +9,7 @@ User=gnu
 Group=gnu
 WorkingDirectory=/home/gnu/codex-cli-over-telegram
 Environment=HOME=/home/gnu
+Environment=PATH=/home/gnu/.local/bin:/home/gnu/.grok/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 EnvironmentFile=/etc/codex-cli-over-telegram/env
 EnvironmentFile=-/etc/codex-cli-over-telegram/deploy.env
 ExecStart=/usr/bin/node /home/gnu/codex-cli-over-telegram/dist/index.js

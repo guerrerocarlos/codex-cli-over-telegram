@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { AppServerClient } from "./appServerClient.js";
 import { AsyncQueue } from "./asyncQueue.js";
 import { describeCommandOutput } from "./commandOutput.js";
+import { codexProviderArgs } from "./modelProviders.js";
 import { PLAN_MODE_DEVELOPER_INSTRUCTIONS } from "./planMode.js";
 import type { AppConfig } from "./config.js";
 import type {
@@ -251,6 +252,7 @@ export class CodexAppServerBackend implements CodexBackend {
         "mcp_servers.telegram_manager.default_tools_approval_mode=\"auto\"",
         "-c",
         "mcp_servers.telegram_manager.tools.queue_topic.approval_mode=\"auto\"",
+        ...codexProviderArgs(this.config, request?.modelProvider ?? this.config.defaultModelProvider),
       ],
       extraEnv: bridgeEnv,
     };

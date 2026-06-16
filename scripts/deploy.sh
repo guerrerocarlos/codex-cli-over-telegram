@@ -53,6 +53,7 @@ sudo sed -i \
   -e "s|^Group=.*|Group=$service_group|" \
   -e "s|^WorkingDirectory=.*|WorkingDirectory=$app_dir|" \
   -e "s|^Environment=HOME=.*|Environment=HOME=$service_home|" \
+  -e "s|^Environment=PATH=.*|Environment=PATH=$service_home/.local/bin:$service_home/.grok/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin|" \
   -e "s|^ExecStart=.*|ExecStart=/usr/bin/node $app_dir/dist/index.js|" \
   -e "s|^ReadWritePaths=.*|ReadWritePaths=$read_write_paths|" \
   "$unit_path"

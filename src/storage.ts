@@ -1,6 +1,7 @@
 import Database from "better-sqlite3";
 import type {
   InterruptedRunRecord,
+  ModelProvider,
   RunRecord,
   RunStatus,
   SandboxMode,
@@ -15,6 +16,7 @@ interface BindingRow {
   topic_name: string | null;
   repo_path: string;
   codex_thread_id: string | null;
+  model_provider: ModelProvider | null;
   model: string | null;
   plan_mode: number;
   sandbox_mode: SandboxMode;
@@ -152,6 +154,7 @@ function mapBinding(row: BindingRow): TopicBinding {
     topicName: row.topic_name,
     repoPath: row.repo_path,
     codexThreadId: row.codex_thread_id,
+    modelProvider: normalizeModelProvider(row.model_provider),
     model: row.model,
     planMode: row.plan_mode === 1,
     sandboxMode: row.sandbox_mode,
@@ -162,6 +165,10 @@ function mapBinding(row: BindingRow): TopicBinding {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+function normalizeModelProvider(value: string | null): ModelProvider {
+  return value === "xai" ? "xai" : "openai";
 }
 
 function parseTokenUsage(value: string | null): ThreadTokenUsageSnapshot | null {
@@ -265,6 +272,7 @@ export class Storage {
         topic_name TEXT,
         repo_path TEXT NOT NULL,
         codex_thread_id TEXT,
+        model_provider TEXT NOT NULL DEFAULT 'openai',
         model TEXT,
         plan_mode INTEGER NOT NULL DEFAULT 0,
         sandbox_mode TEXT NOT NULL DEFAULT 'read-only',
@@ -348,6 +356,7 @@ export class Storage {
     `);
 
     this.addColumnIfMissing("topic_bindings", "model", "TEXT");
+    this.addColumnIfMissing("topic_bindings", "model_provider", "TEXT NOT NULL DEFAULT 'openai'");
     this.addColumnIfMissing("topic_bindings", "plan_mode", "INTEGER NOT NULL DEFAULT 0");
     this.addColumnIfMissing("topic_bindings", "token_usage_json", "TEXT");
   }
@@ -400,16 +409,17 @@ export class Storage {
     repoPath: string;
     createdByUserId: number;
     sandboxMode: SandboxMode;
+    modelProvider: ModelProvider;
   }): TopicBinding {
     const timestamp = now();
     this.db
       .prepare(
         `
         INSERT INTO topic_bindings (
-          chat_id, message_thread_id, topic_name, repo_path, sandbox_mode,
+          chat_id, message_thread_id, topic_name, repo_path, sandbox_mode, model_provider,
           approval_policy, status, created_by_user_id, created_at, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, 'never', 'idle', ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, 'never', 'idle', ?, ?, ?)
         ON CONFLICT(chat_id, message_thread_id) DO UPDATE SET
           topic_name = excluded.topic_name,
           repo_path = excluded.repo_path,
@@ -423,6 +433,7 @@ export class Storage {
         input.topicName,
         input.repoPath,
         input.sandboxMode,
+        input.modelProvider,
         input.createdByUserId,
         timestamp,
         timestamp,
@@ -466,6 +477,12 @@ export class Storage {
     this.db
       .prepare("UPDATE topic_bindings SET model = ?, updated_at = ? WHERE id = ?")
       .run(model, now(), bindingId);
+  }
+
+  updateBindingModelSelection(bindingId: number, modelProvider: ModelProvider, model: string | null): void {
+    this.db
+      .prepare("UPDATE topic_bindings SET model_provider = ?, model = ?, updated_at = ? WHERE id = ?")
+      .run(modelProvider, model, now(), bindingId);
   }
 
   updateBindingPlanMode(bindingId: number, planMode: boolean): void {

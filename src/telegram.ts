@@ -8,6 +8,7 @@ import type {
   CodexBackend,
   CodexRunEvent,
   InterruptedRunRecord,
+  ModelProvider,
   RunRecord,
   SandboxMode,
   ThreadTokenUsageSnapshot,
@@ -25,6 +26,7 @@ import {
   type CodexConfigSnapshot,
   type CodexModelInfo,
 } from "./codexMetadata.js";
+import { providerFromAlias, providerLabel, xaiModelOptions } from "./modelProviders.js";
 import { logger } from "./logger.js";
 import { TelegramSendQueue } from "./telegramSendQueue.js";
 import {
@@ -188,6 +190,7 @@ export function createTelegramBot(
         repoPath,
         createdByUserId: ctx.from?.id ?? 0,
         sandboxMode: effectiveSandboxMode(config, config.defaultSandboxMode),
+        modelProvider: config.defaultModelProvider,
       });
       storage.audit({
         telegramUserId: ctx.from?.id ?? null,
@@ -247,6 +250,7 @@ export function createTelegramBot(
         repoPath,
         createdByUserId: ctx.from?.id ?? 0,
         sandboxMode: effectiveSandboxMode(config, config.defaultSandboxMode),
+        modelProvider: config.defaultModelProvider,
       });
 
       storage.audit({
@@ -324,21 +328,21 @@ export function createTelegramBot(
     }
 
     try {
-      const models = await listCodexModels(config.codexBin);
+      const models = await listModelOptions(config, binding.modelProvider);
       if (models.length === 0) {
-        await reply(ctx, "No Codex models were returned by app-server.", config);
+        await reply(ctx, `No ${providerLabel(binding.modelProvider)} models are configured.`, config);
         return;
       }
       await replyWithModelKeyboard(
         ctx,
         config,
         [
-          "Available models:",
+          `Available ${providerLabel(binding.modelProvider)} models:`,
           "",
           `Current: ${await modelLabel(config, binding)}`,
           "Tap a button to set this topic's model.",
         ].join("\n"),
-        modelKeyboard(models, binding.model),
+        modelKeyboard(models, binding.modelProvider, binding.model),
       );
     } catch (error) {
       await reply(ctx, `Could not list models:\n${codeBlock(errorMessage(error))}`, config);
@@ -358,46 +362,88 @@ export function createTelegramBot(
     }
 
     if (requestedModel === "default" || requestedModel === "clear" || requestedModel === "reset") {
-      storage.updateBindingModel(binding.id, null);
+      storage.updateBindingModelSelection(binding.id, config.defaultModelProvider, null);
       storage.audit({
         telegramUserId: ctx.from?.id ?? null,
         chatId: binding.chatId,
         messageThreadId: binding.messageThreadId,
         eventType: "model",
-        details: { model: null },
+        details: { modelProvider: config.defaultModelProvider, model: null },
       });
       await reply(ctx, `Topic model reset to Codex config default:\n${codeBlock(await globalModelLabel(config, binding.repoPath))}`, config);
       return;
     }
 
     try {
-      const models = await listCodexModels(config.codexBin);
-      const match = models.find((model) => model.model === requestedModel || model.id === requestedModel);
+      const requested = parseRequestedModel(binding.modelProvider, requestedModel);
+      const models = await listModelOptions(config, requested.provider);
+      const match = models.find((model) => model.model === requested.model || model.id === requested.model);
       if (!match) {
         await reply(
           ctx,
-          [`Unknown model:`, codeBlock(requestedModel), "", "Use /models to list available models."].join("\n"),
+          [`Unknown ${providerLabel(requested.provider)} model:`, codeBlock(requested.model), "", "Use /models to list available models for the current provider."].join("\n"),
           config,
         );
         return;
       }
 
-      storage.updateBindingModel(binding.id, match.model);
+      storage.updateBindingModelSelection(binding.id, match.provider, match.model);
       storage.audit({
         telegramUserId: ctx.from?.id ?? null,
         chatId: binding.chatId,
         messageThreadId: binding.messageThreadId,
         eventType: "model",
-        details: { model: match.model },
+        details: { modelProvider: match.provider, model: match.model },
       });
       await reply(
         ctx,
-        [`Topic model set to:`, codeBlock(match.model), "", "The next run will use the new model in this thread."].join("\n"),
+        [`Topic model set to:`, codeBlock(`${providerLabel(match.provider)} / ${match.model}`), "", "The next run will use the new model in this thread."].join("\n"),
         config,
       );
     } catch (error) {
       await reply(ctx, `Could not set model:\n${codeBlock(errorMessage(error))}`, config);
     }
+  });
+
+  bot.command("provider", async (ctx) => {
+    const binding = await requireBinding(ctx, config, storage);
+    if (!binding) {
+      return;
+    }
+
+    const requestedProvider = ctx.match.trim();
+    if (!requestedProvider) {
+      await reply(
+        ctx,
+        [
+          `Current provider:\n${codeBlock(providerLabel(binding.modelProvider))}`,
+          "",
+          "Use `/provider openai` or `/provider xai`.",
+        ].join("\n"),
+        config,
+      );
+      return;
+    }
+
+    const provider = providerFromAlias(requestedProvider);
+    if (!provider) {
+      await reply(ctx, `Unknown provider:\n${codeBlock(requestedProvider)}\n\nUse openai or xai.`, config);
+      return;
+    }
+
+    storage.updateBindingModelSelection(binding.id, provider, null);
+    storage.audit({
+      telegramUserId: ctx.from?.id ?? null,
+      chatId: binding.chatId,
+      messageThreadId: binding.messageThreadId,
+      eventType: "provider",
+      details: { modelProvider: provider, model: null },
+    });
+    await reply(
+      ctx,
+      [`Topic provider set to:`, codeBlock(providerLabel(provider)), "", "Topic model was reset. Use /models to choose a model."].join("\n"),
+      config,
+    );
   });
 
   bot.callbackQuery(/^model:(default|set:.+)$/, async (ctx) => {
@@ -409,41 +455,41 @@ export function createTelegramBot(
 
     const data = ctx.callbackQuery.data;
     if (data === "model:default") {
-      storage.updateBindingModel(binding.id, null);
+      storage.updateBindingModelSelection(binding.id, config.defaultModelProvider, null);
       storage.audit({
         telegramUserId: ctx.from?.id ?? null,
         chatId: binding.chatId,
         messageThreadId: binding.messageThreadId,
         eventType: "model",
-        details: { model: null },
+        details: { modelProvider: config.defaultModelProvider, model: null },
       });
       await ctx.answerCallbackQuery({ text: "Model reset to default." });
       await reply(ctx, `Topic model reset to Codex config default:\n${codeBlock(await globalModelLabel(config, binding.repoPath))}`, config);
       return;
     }
 
-    const requestedModel = data.slice("model:set:".length);
+    const requested = parseRequestedModel(binding.modelProvider, data.slice("model:set:".length));
     try {
-      const models = await listCodexModels(config.codexBin);
-      const match = models.find((model) => model.model === requestedModel || model.id === requestedModel);
+      const models = await listModelOptions(config, requested.provider);
+      const match = models.find((model) => model.model === requested.model || model.id === requested.model);
       if (!match) {
         await ctx.answerCallbackQuery({ text: "Unknown model.", show_alert: true });
         await sendModelSwitcher(ctx, config, binding);
         return;
       }
 
-      storage.updateBindingModel(binding.id, match.model);
+      storage.updateBindingModelSelection(binding.id, match.provider, match.model);
       storage.audit({
         telegramUserId: ctx.from?.id ?? null,
         chatId: binding.chatId,
         messageThreadId: binding.messageThreadId,
         eventType: "model",
-        details: { model: match.model },
+        details: { modelProvider: match.provider, model: match.model },
       });
       await ctx.answerCallbackQuery({ text: `Model set to ${match.model}.` });
       await reply(
         ctx,
-        [`Topic model set to:`, codeBlock(match.model), "", "The next run will use the new model in this thread."].join("\n"),
+        [`Topic model set to:`, codeBlock(`${providerLabel(match.provider)} / ${match.model}`), "", "The next run will use the new model in this thread."].join("\n"),
         config,
       );
     } catch (error) {
@@ -543,7 +589,7 @@ export function createTelegramBot(
       eventType: "new_thread",
       details: { bindingId: binding.id },
     });
-    await reply(ctx, "Started a fresh Codex thread for this topic. The next prompt will use clean context.", config);
+    await reply(ctx, "Started a fresh agent thread for this topic. The next prompt will use clean context.", config);
   });
 
   bot.command("compact", async (ctx) => {
@@ -555,7 +601,11 @@ export function createTelegramBot(
       return;
     }
     if (!binding.codexThreadId) {
-      await reply(ctx, "No Codex thread exists for this topic yet. Send a prompt first, or use /new for clean context.", config);
+      await reply(ctx, "No agent thread exists for this topic yet. Send a prompt first, or use /new for clean context.", config);
+      return;
+    }
+    if (binding.modelProvider === "xai") {
+      await reply(ctx, "Grok ACP sessions do not support Telegram-triggered compaction yet. Use /new for a fresh Grok session.", config);
       return;
     }
     if (!codex.compactThread) {
@@ -1172,6 +1222,7 @@ export async function handleTelegramBridgeRequest(input: {
         repoPath,
         createdByUserId: 0,
         sandboxMode: effectiveSandboxMode(config, config.defaultSandboxMode),
+        modelProvider: config.defaultModelProvider,
       });
       storage.audit({
         telegramUserId: null,
@@ -1539,6 +1590,7 @@ async function executeRun(
       codexThreadId: binding.codexThreadId,
       sandboxMode,
       approvalPolicy: binding.approvalPolicy,
+      modelProvider: binding.modelProvider,
       model: binding.model,
       planMode: binding.planMode,
     })) {
@@ -1908,9 +1960,9 @@ async function sendChatAction(bot: Bot, binding: TopicBinding): Promise<void> {
 
 async function sendModelSwitcher(ctx: Context, config: AppConfig, binding: TopicBinding): Promise<void> {
   try {
-    const models = await listCodexModels(config.codexBin);
+    const models = await listModelOptions(config, binding.modelProvider);
     if (models.length === 0) {
-      await reply(ctx, "No Codex models were returned by app-server.", config);
+      await reply(ctx, `No ${providerLabel(binding.modelProvider)} models are configured.`, config);
       return;
     }
 
@@ -1918,28 +1970,61 @@ async function sendModelSwitcher(ctx: Context, config: AppConfig, binding: Topic
       ctx,
       config,
       [
-        "Choose model for this topic.",
+        `Choose ${providerLabel(binding.modelProvider)} model for this topic.`,
         "",
         `Current: ${await modelLabel(config, binding)}`,
         "The next run will use the selected model in this thread.",
       ].join("\n"),
-      modelKeyboard(models, binding.model),
+      modelKeyboard(models, binding.modelProvider, binding.model),
     );
   } catch (error) {
     await reply(ctx, `Could not list models:\n${codeBlock(errorMessage(error))}`, config);
   }
 }
 
-function modelKeyboard(models: CodexModelInfo[], currentModel: string | null): InlineKeyboard {
+interface ModelOption {
+  provider: ModelProvider;
+  id: string;
+  model: string;
+  displayName: string;
+}
+
+async function listModelOptions(config: AppConfig, provider: ModelProvider): Promise<ModelOption[]> {
+  if (provider === "xai") {
+    return xaiModelOptions(config);
+  }
+
+  const models = await listCodexModels(config.codexBin);
+  return models.map((model) => ({
+    provider: "openai",
+    id: model.id,
+    model: model.model,
+    displayName: model.displayName || model.model,
+  }));
+}
+
+function parseRequestedModel(currentProvider: ModelProvider, input: string): { provider: ModelProvider; model: string } {
+  const [prefix, ...rest] = input.split(":");
+  if (prefix && rest.length > 0) {
+    const provider = providerFromAlias(prefix);
+    if (provider) {
+      return { provider, model: rest.join(":").trim() };
+    }
+  }
+  return { provider: currentProvider, model: input.trim() };
+}
+
+function modelKeyboard(models: ModelOption[], currentProvider: ModelProvider, currentModel: string | null): InlineKeyboard {
   const keyboard = new InlineKeyboard();
   keyboard.text(`${currentModel === null ? "Default (current)" : "Default"}`, "model:default").row();
 
   for (const model of models) {
-    const callbackData = `model:set:${model.model}`;
+    const callbackData = `model:set:${model.provider}:${model.model}`;
     if (callbackData.length > 64) {
       continue;
     }
-    const label = `${model.displayName || model.model}${currentModel === model.model ? " (current)" : ""}`;
+    const isCurrent = currentProvider === model.provider && currentModel === model.model;
+    const label = `${model.displayName || model.model}${isCurrent ? " (current)" : ""}`;
     keyboard.text(label.slice(0, 56), callbackData).row();
   }
 
@@ -2227,17 +2312,23 @@ function oneLine(value: string, maxLength: number): string {
 
 async function modelLabel(config: AppConfig, binding: TopicBinding): Promise<string> {
   if (binding.model) {
-    return `${binding.model} (topic)`;
+    return `${providerLabel(binding.modelProvider)} / ${binding.model} (topic)`;
+  }
+  if (binding.modelProvider === "xai") {
+    return `${providerLabel(binding.modelProvider)} / (provider default)`;
   }
   return globalModelLabel(config, binding.repoPath);
 }
 
 async function globalModelLabel(config: AppConfig, cwd?: string): Promise<string> {
+  if (config.defaultModelProvider === "xai") {
+    return `${providerLabel(config.defaultModelProvider)} / (provider default)`;
+  }
   try {
     const snapshot = await readCodexConfig(config.codexBin, cwd);
-    return formatConfigModel(snapshot);
+    return `${providerLabel("openai")} / ${formatConfigModel(snapshot)}`;
   } catch {
-    return "(Codex config default)";
+    return `${providerLabel("openai")} / (Codex config default)`;
   }
 }
 
@@ -2406,14 +2497,15 @@ function helpText(): string {
     "/bind <absolute_repo_path> - bind this topic to a git repo",
     "/create <folder> - create a folder, topic, and binding",
     "/where - show repo, branch, mode, and git status",
-    "/models - list available Codex models",
-    "/model - show or set this topic's Codex model",
+    "/provider - show or set this topic's provider: openai or xai",
+    "/models - list available models for this topic's provider",
+    "/model - show or set this topic's model",
     "/plan - show or toggle plan mode for this topic",
     "/mode read - use read-only Codex sandbox",
     "/mode write - allow Codex workspace edits",
     "/topic - rename this Telegram topic to the bound folder name",
-    "/new - start a fresh Codex thread with clean context",
-    "/compact - compact this topic's Codex thread",
+    "/new - start a fresh agent thread with clean context",
+    "/compact - compact this topic's Codex thread when using OpenAI",
     "/dashboard - show all topic activity",
     "/topics - list all bound topics",
     "/todo - show running, queued, and failed work",
@@ -2423,12 +2515,12 @@ function helpText(): string {
     "/commit <message> - commit repo changes",
     "/push - push current HEAD to origin",
     "/unbind - remove this topic binding",
-    "/ask <prompt> - send a Codex prompt as a command",
-    "/queue <prompt> - queue the next Codex turn instead of steering the active run",
+    "/ask <prompt> - send an agent prompt as a command",
+    "/queue <prompt> - queue the next agent turn instead of steering the active run",
     "/queue_topic <topic-id-or-name> <prompt> - queue prompt for a worker topic",
     "/assign <topic-id-or-name> <prompt> - alias for /queue_topic",
     "",
-    "Any ordinary message in a bound topic is sent to Codex if Telegram privacy mode allows it. During an active app-server run, ordinary messages steer the current turn. Use /queue to force a follow-up turn, or /ask when privacy mode is enabled.",
+    "Any ordinary message in a bound topic is sent to the selected agent if Telegram privacy mode allows it. During an active OpenAI app-server run, ordinary messages steer the current turn. Use /queue to force a follow-up turn, or /ask when privacy mode is enabled.",
   ].join("\n");
 }
 
@@ -2437,13 +2529,14 @@ export function telegramCommandMenu(): Array<{ command: string; description: str
     { command: "bind", description: "Bind this topic to a folder" },
     { command: "create", description: "Create a folder and topic" },
     { command: "where", description: "Show this topic binding and status" },
-    { command: "models", description: "List available Codex models" },
+    { command: "provider", description: "Set OpenAI or xAI provider" },
+    { command: "models", description: "List available provider models" },
     { command: "model", description: "Show or set this topic model" },
     { command: "plan", description: "Show or toggle plan mode" },
     { command: "mode", description: "Set read or write sandbox mode" },
     { command: "topic", description: "Rename this Telegram topic" },
-    { command: "new", description: "Start a fresh Codex thread" },
-    { command: "compact", description: "Compact this topic's Codex thread" },
+    { command: "new", description: "Start a fresh agent thread" },
+    { command: "compact", description: "Compact OpenAI thread" },
     { command: "dashboard", description: "Show topic activity" },
     { command: "topics", description: "List managed topic bindings" },
     { command: "todo", description: "Show todo from run state" },
@@ -2453,8 +2546,8 @@ export function telegramCommandMenu(): Array<{ command: string; description: str
     { command: "commit", description: "Commit repo changes" },
     { command: "push", description: "Push current HEAD" },
     { command: "unbind", description: "Remove this topic binding" },
-    { command: "ask", description: "Send a Codex prompt as a command" },
-    { command: "queue", description: "Queue the next Codex turn" },
+    { command: "ask", description: "Send an agent prompt as a command" },
+    { command: "queue", description: "Queue the next agent turn" },
     { command: "queue_topic", description: "Queue a prompt for a worker topic" },
     { command: "assign", description: "Alias for /queue_topic" },
   ];

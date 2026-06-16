@@ -30,6 +30,10 @@ ALLOWED_TELEGRAM_CHAT_IDS=
 ALLOWED_REPO_ROOTS=/home/you
 DATABASE_PATH=./state.sqlite
 CODEX_BACKEND=app-server
+DEFAULT_MODEL_PROVIDER=openai
+XAI_MODELS=grok-build-0.1,grok-4.3
+GROK_AGENT_COMMAND=grok
+GROK_AGENT_ARGS=agent,stdio
 ALLOW_UNTHREADED_CHATS=true
 CODEX_ALWAYS_YOLO=false
 TELEGRAM_SEND_INTERVAL_MS=1500
@@ -38,6 +42,15 @@ OPENAI_API_KEY=
 OPENAI_TRANSCRIPTION_MODEL=gpt-4o-transcribe
 FFMPEG_BIN=ffmpeg
 ```
+
+To use Grok Build through ACP, install and sign in as the service user:
+
+```bash
+curl -fsSL https://x.ai/cli/install.sh | bash
+grok login
+```
+
+For systemd, use an absolute `GROK_AGENT_COMMAND` such as `/home/gnu/.local/bin/grok` if `grok` is not on the service `PATH`.
 
 Start Codex CLI over Telegram:
 
@@ -67,9 +80,12 @@ Useful commands:
 /bind ~/path/to/project
 /create ~/new-project-folder
 /where
+/provider
+/provider xai
 /models
 /model
 /model gpt-5.5
+/model xai:grok-build-0.1
 /plan on
 /plan off
 /mode read
@@ -197,6 +213,10 @@ ALLOWED_REPO_ROOTS=/path/to/allowed/repos
 DATABASE_PATH=/path/to/service-home/.local/state/codex-cli-over-telegram/state.sqlite
 CODEX_BIN=codex
 CODEX_BACKEND=app-server
+DEFAULT_MODEL_PROVIDER=openai
+XAI_MODELS=grok-build-0.1,grok-4.3
+GROK_AGENT_COMMAND=/home/gnu/.local/bin/grok
+GROK_AGENT_ARGS=agent,stdio
 DEFAULT_SANDBOX_MODE=read-only
 CODEX_ALWAYS_YOLO=false
 ALLOW_UNTHREADED_CHATS=true
