@@ -755,6 +755,13 @@ export function createTelegramBot(
         return;
       }
     }
+    if (isTopicZero(ctx, config)) {
+      const queueTopicCommand = parseEmbeddedManagerQueueCommand(text);
+      if (queueTopicCommand !== null) {
+        await handleManagerQueueTopicCommand(ctx, config, storage, codex, bot, queue, queueTopicCommand);
+        return;
+      }
+    }
     if (text.startsWith("/")) {
       return;
     }
@@ -1116,6 +1123,16 @@ function parseManagerQueueTopicRequest(input: string): ManagerQueueTopicRequest 
   }
 
   return { selector, prompt };
+}
+
+function parseEmbeddedManagerQueueCommand(text: string): string | null {
+  const match = text.match(/(?:^|\s)\/(assign|queue_topic)\s+([\s\S]+)$/i);
+  if (!match) {
+    return null;
+  }
+
+  const extracted = match[2].trim();
+  return extracted.length > 0 ? extracted : null;
 }
 
 function findManagerTargetBinding(storage: Storage, chatId: number, selector: string): TopicBinding | null {
