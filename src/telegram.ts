@@ -1987,7 +1987,9 @@ async function sendManagerRunReport(
   });
 
   try {
-    await sendTextToTopic(bot, config, binding.chatId, 0, managerRunReportText(binding, run, status, details));
+    await sendTextToTopic(bot, config, binding.chatId, 0, managerRunReportText(binding, run, status, details), {
+      notify: false,
+    });
   } catch (error) {
     logger.warn("failed to send manager run report", {
       chatId: binding.chatId,
