@@ -1096,7 +1096,7 @@ export async function queueManagerTopicRun(input: QueueManagerTopicRunInput): Pr
 
   const key = topicKey(binding.chatId, binding.messageThreadId);
   const queuedBehind = queue.depth(key);
-  const run = storage.createRun(binding.id, null, request.prompt);
+  let run = storage.createRun(binding.id, null, request.prompt);
   storage.addManagerEvent({
     chatId: binding.chatId,
     sourceMessageThreadId: binding.messageThreadId,
@@ -1129,7 +1129,7 @@ export async function queueManagerTopicRun(input: QueueManagerTopicRunInput): Pr
     },
   });
 
-  await sendText(
+  const taskMessageId = await sendText(
     bot,
     config,
     binding,
@@ -1141,6 +1141,10 @@ export async function queueManagerTopicRun(input: QueueManagerTopicRunInput): Pr
     ].join("\n"),
     { notify: true, replyToMessageId: input.replyToMessageId },
   );
+  if (taskMessageId !== null) {
+    storage.updateRunTelegramMessageId(run.id, taskMessageId);
+    run = { ...run, telegramMessageId: taskMessageId };
+  }
 
   queue.enqueue(key, async () => {
     const freshBinding = storage.getBindingById(binding.id);
@@ -1867,8 +1871,8 @@ async function sendText(
   binding: TopicBinding,
   text: string,
   options: SendOptions = {},
-): Promise<void> {
-  await sendTextToTopic(bot, config, binding.chatId, binding.messageThreadId, text, options);
+): Promise<number | null> {
+  return sendTextToTopic(bot, config, binding.chatId, binding.messageThreadId, text, options);
 }
 
 async function sendTextToTopic(
@@ -1878,8 +1882,9 @@ async function sendTextToTopic(
   messageThreadId: number,
   text: string,
   options: SendOptions = {},
-): Promise<void> {
+): Promise<number | null> {
   const chunks = markdownV2Chunks(text, config.maxTelegramMessageChars);
+  let firstMessageId: number | null = null;
   for (const [index, chunk] of chunks.entries()) {
     const sendOptions = {
       link_preview_options: { is_disabled: true },
@@ -1895,8 +1900,12 @@ async function sendTextToTopic(
           }
         : {}),
     } as const;
-    await sendQueueFor(config).sendMessage(bot.api, chatId, chunk, sendOptions);
+    const message = await sendQueueFor(config).sendMessage(bot.api, chatId, chunk, sendOptions);
+    if (index === 0) {
+      firstMessageId = message.message_id;
+    }
   }
+  return firstMessageId;
 }
 
 async function sendChatAction(bot: Bot, binding: TopicBinding): Promise<void> {

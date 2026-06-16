@@ -523,6 +523,10 @@ export class Storage {
     this.db.prepare("UPDATE runs SET codex_run_id = ? WHERE id = ?").run(codexRunId, runId);
   }
 
+  updateRunTelegramMessageId(runId: number, telegramMessageId: number): void {
+    this.db.prepare("UPDATE runs SET telegram_message_id = ? WHERE id = ?").run(telegramMessageId, runId);
+  }
+
   completeRun(runId: number, finalMessage: string | null, exitCode = 0): void {
     this.db
       .prepare(
