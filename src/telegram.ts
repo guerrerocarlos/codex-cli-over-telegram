@@ -200,7 +200,7 @@ export function createTelegramBot(
           `Branch:\n${codeBlock(branch)}`,
           `Model:\n${codeBlock(await modelLabel(config, binding))}`,
           `Plan mode:\n${codeBlock(formatPlanMode(binding.planMode))}`,
-          `Mode:\n${codeBlock(effectiveSandboxMode(config, binding.sandboxMode))}`,
+          `Mode:\n${codeBlock(effectiveRunSandboxMode(config, binding))}`,
           isRepo ? null : "Git commands are unavailable until this path is initialized as a repo.",
           renameResult,
         ]
@@ -303,7 +303,7 @@ export function createTelegramBot(
         `Branch:\n${codeBlock(branch)}`,
         `Model:\n${codeBlock(await modelLabel(config, binding))}`,
         `Plan mode:\n${codeBlock(formatPlanMode(binding.planMode))}`,
-        `Mode:\n${codeBlock(effectiveSandboxMode(config, binding.sandboxMode))}`,
+        `Mode:\n${codeBlock(effectiveRunSandboxMode(config, binding))}`,
         `Codex session:\n${codeBlock(binding.codexThreadId ?? "(new)")}`,
         `Status:\n${codeBlock(binding.status)}`,
         "",
@@ -577,7 +577,7 @@ export function createTelegramBot(
           `Repo:\n${codeBlock(binding.repoPath)}`,
           `Model:\n${codeBlock(await modelLabel(config, binding))}`,
           `Plan mode:\n${codeBlock(formatPlanMode(binding.planMode))}`,
-          `Mode:\n${codeBlock(effectiveSandboxMode(config, binding.sandboxMode))}`,
+          `Mode:\n${codeBlock(effectiveRunSandboxMode(config, binding))}`,
           `Context:\n${codeBlock(formatThreadTokenUsage(binding.tokenUsage))}`,
           usage,
         ].join("\n"),
@@ -711,6 +711,10 @@ export function createTelegramBot(
       await reply(ctx, "Usage: /ask what you want Codex to do", config);
       return;
     }
+    if (isTopicZero(ctx, config)) {
+      await handleManagerPrompt(ctx, config, storage, codex, bot, queue, text);
+      return;
+    }
     await handlePrompt(ctx, config, storage, codex, bot, queue, text);
   });
 
@@ -718,6 +722,10 @@ export function createTelegramBot(
     const text = ctx.match.trim();
     if (!text) {
       await reply(ctx, "Usage: /queue what Codex should do after the current run", config);
+      return;
+    }
+    if (isTopicZero(ctx, config)) {
+      await handleManagerPrompt(ctx, config, storage, codex, bot, queue, text, { forceQueue: true });
       return;
     }
     await handlePrompt(ctx, config, storage, codex, bot, queue, text, { forceQueue: true });
@@ -730,6 +738,10 @@ export function createTelegramBot(
   bot.on("message:text", async (ctx) => {
     const text = ctx.message.text.trim();
     if (!text || text.startsWith("/")) {
+      return;
+    }
+    if (isTopicZero(ctx, config)) {
+      await handleManagerPrompt(ctx, config, storage, codex, bot, queue, text);
       return;
     }
     await handlePrompt(ctx, config, storage, codex, bot, queue, text);
@@ -908,6 +920,34 @@ async function handleVoiceMessage(
   }
 }
 
+async function handleManagerPrompt(
+  ctx: Context,
+  config: AppConfig,
+  storage: Storage,
+  codex: CodexBackend,
+  bot: Bot,
+  queue: RunQueue,
+  text: string,
+  options: HandlePromptOptions = {},
+): Promise<void> {
+  const topic = await requireTopicZero(ctx, config);
+  if (!topic) {
+    return;
+  }
+
+  ensureManagerBinding(ctx, config, storage, topic);
+  await handlePrompt(
+    ctx,
+    config,
+    storage,
+    codex,
+    bot,
+    queue,
+    managerPromptText(storage, topic.chatId, text),
+    options,
+  );
+}
+
 async function handlePrompt(
   ctx: Context,
   config: AppConfig,
@@ -955,7 +995,7 @@ async function handlePrompt(
 
   if (queuedBehind > 0) {
     await reply(ctx, `Queued run #${run.id} behind ${queuedBehind} active/queued run(s).`, config);
-    await sendManagerRunReport(bot, config, binding, run, "queued", `Queued behind ${queuedBehind} active/queued run(s).`);
+    await sendManagerRunReport(storage, bot, config, binding, run, "queued", `Queued behind ${queuedBehind} active/queued run(s).`);
   } else {
     await reply(
       ctx,
@@ -964,7 +1004,7 @@ async function handlePrompt(
         `Repo:\n${codeBlock(binding.repoPath)}`,
         `Model:\n${codeBlock(await modelLabel(config, binding))}`,
         `Plan mode:\n${codeBlock(formatPlanMode(binding.planMode))}`,
-        `Mode:\n${codeBlock(effectiveSandboxMode(config, binding.sandboxMode))}`,
+        `Mode:\n${codeBlock(effectiveRunSandboxMode(config, binding))}`,
       ].join("\n"),
       config,
     );
@@ -1074,7 +1114,7 @@ async function executeRun(
   let lastProgressAt = 0;
 
   try {
-    const sandboxMode = effectiveSandboxMode(config, binding.sandboxMode);
+    const sandboxMode = effectiveRunSandboxMode(config, binding);
 
     if (isWriteSandbox(sandboxMode)) {
       lockAcquired = storage.acquireWriteLock(binding.repoPath, run.id);
@@ -1085,7 +1125,7 @@ async function executeRun(
           : "Repo is busy.";
         storage.failRun(run.id, message);
         await sendText(bot, config, binding, message, terminalRunSendOptions(run));
-        await sendManagerRunReport(bot, config, binding, run, "failed", message);
+        await sendManagerRunReport(storage, bot, config, binding, run, "failed", message);
         return;
       }
     }
@@ -1100,7 +1140,7 @@ async function executeRun(
       eventType: "run_started",
       details: { runId: run.id, repoPath: binding.repoPath, sandboxMode },
     });
-    await sendManagerRunReport(bot, config, binding, run, "started", `Repo:\n${binding.repoPath}`);
+    await sendManagerRunReport(storage, bot, config, binding, run, "started", `Repo:\n${binding.repoPath}`);
 
     for await (const event of codex.run({
       bindingId: binding.id,
@@ -1167,7 +1207,7 @@ async function executeRun(
           `Run #${run.id} failed:\n${codeBlock(truncateText(event.error, 2500))}`,
           terminalRunSendOptions(run),
         );
-        await sendManagerRunReport(bot, config, binding, run, "failed", truncateText(event.error, 1200));
+        await sendManagerRunReport(storage, bot, config, binding, run, "failed", truncateText(event.error, 1200));
         return;
       }
 
@@ -1185,7 +1225,7 @@ async function executeRun(
       completionMessage === lastSentAgentMessage ? "Done." : completionMessage,
       terminalRunSendOptions(run),
     );
-    await sendManagerRunReport(bot, config, binding, run, "completed", truncateText(completionMessage, 1200));
+    await sendManagerRunReport(storage, bot, config, binding, run, "completed", truncateText(completionMessage, 1200));
   } catch (error) {
     const message = errorMessage(error);
     storage.failRun(run.id, message);
@@ -1193,7 +1233,7 @@ async function executeRun(
       notify: true,
       replyToMessageId: run.telegramMessageId,
     });
-    await sendManagerRunReport(bot, config, binding, run, "failed", truncateText(message, 1200));
+    await sendManagerRunReport(storage, bot, config, binding, run, "failed", truncateText(message, 1200));
   } finally {
     if (lockAcquired) {
       storage.releaseLock(binding.repoPath, run.id);
@@ -1218,6 +1258,10 @@ function getTopicRef(ctx: Context, config: AppConfig): TopicRef | null {
   }
 
   return null;
+}
+
+function isTopicZero(ctx: Context, config: AppConfig): boolean {
+  return getTopicRef(ctx, config)?.messageThreadId === 0;
 }
 
 async function requireBinding(
@@ -1253,6 +1297,39 @@ async function requireTopicZero(ctx: Context, config: AppConfig): Promise<TopicR
   }
 
   return topic;
+}
+
+function ensureManagerBinding(
+  ctx: Context,
+  config: AppConfig,
+  storage: Storage,
+  topic: TopicRef,
+): TopicBinding {
+  const existing = storage.getBinding(topic.chatId, topic.messageThreadId);
+  if (existing) {
+    if (existing.sandboxMode !== "read-only") {
+      storage.updateBindingMode(existing.id, "read-only");
+      return storage.getBindingById(existing.id) ?? existing;
+    }
+    return existing;
+  }
+
+  const binding = storage.upsertBinding({
+    chatId: topic.chatId,
+    messageThreadId: topic.messageThreadId,
+    topicName: "manager",
+    repoPath: process.cwd(),
+    createdByUserId: ctx.from?.id ?? 0,
+    sandboxMode: "read-only",
+  });
+  storage.audit({
+    telegramUserId: ctx.from?.id ?? null,
+    chatId: topic.chatId,
+    messageThreadId: topic.messageThreadId,
+    eventType: "manager_binding_created",
+    details: { repoPath: binding.repoPath },
+  });
+  return binding;
 }
 
 async function ensureNoActiveRun(
@@ -1408,6 +1485,7 @@ async function sendChatAction(bot: Bot, binding: TopicBinding): Promise<void> {
 }
 
 async function sendManagerRunReport(
+  storage: Storage,
   bot: Bot,
   config: AppConfig,
   binding: TopicBinding,
@@ -1418,6 +1496,21 @@ async function sendManagerRunReport(
   if (binding.messageThreadId === 0) {
     return;
   }
+
+  storage.addManagerEvent({
+    chatId: binding.chatId,
+    sourceMessageThreadId: binding.messageThreadId,
+    bindingId: binding.id,
+    runId: run.id,
+    eventType: `run_${status}`,
+    summary: managerEventSummary(binding, run, status, details),
+    details: {
+      topicName: topicDisplayName(binding),
+      repoPath: binding.repoPath,
+      prompt: run.prompt,
+      details,
+    },
+  });
 
   try {
     await sendTextToTopic(bot, config, binding.chatId, 0, managerRunReportText(binding, run, status, details));
@@ -1430,6 +1523,11 @@ async function sendManagerRunReport(
       error: errorMessage(error),
     });
   }
+}
+
+function managerEventSummary(binding: TopicBinding, run: RunRecord, status: string, details: string): string {
+  const detail = details.trim() ? ` - ${oneLine(details, 160)}` : "";
+  return `${topicDisplayName(binding)} run #${run.id} ${status}: ${oneLine(run.prompt, 180)}${detail}`;
 }
 
 function managerRunReportText(binding: TopicBinding, run: RunRecord, status: string, details: string): string {
@@ -1492,6 +1590,10 @@ function formatPlanMode(planMode: boolean): string {
 
 function effectiveSandboxMode(config: AppConfig, sandboxMode: SandboxMode): SandboxMode {
   return config.alwaysYoloMode ? "danger-full-access" : sandboxMode;
+}
+
+function effectiveRunSandboxMode(config: AppConfig, binding: TopicBinding): SandboxMode {
+  return binding.messageThreadId === 0 ? binding.sandboxMode : effectiveSandboxMode(config, binding.sandboxMode);
 }
 
 function isWriteSandbox(sandboxMode: SandboxMode): boolean {
@@ -1708,6 +1810,55 @@ function managerTodoText(storage: Storage, chatId: number): string {
         : [],
     ),
   ].join("\n");
+}
+
+function managerPromptText(storage: Storage, chatId: number, userText: string): string {
+  const bindings = storage.listBindingsForChat(chatId).filter((binding) => binding.messageThreadId !== 0);
+  const actionable = storage.listActionableRunsForChat(chatId, 20);
+  const events = storage.listManagerEvents(chatId, 40);
+
+  return [
+    "You are the topic-zero manager for Codex CLI over Telegram.",
+    "Help organize work across worker topics, identify blockers, suggest priorities, and summarize what has happened.",
+    "Do not claim you changed worker topics unless the provided context says that happened. If the user asks you to assign or queue work, explain the exact Telegram command they should use unless a manager command exists for it.",
+    "",
+    "Current user request:",
+    userText,
+    "",
+    "Managed worker topics:",
+    bindings.length > 0
+      ? bindings.map((binding) => formatManagerTopicContext(storage, binding)).join("\n")
+      : "No worker topics are currently bound.",
+    "",
+    "Actionable runs:",
+    actionable.length > 0
+      ? actionable.map(({ binding, run }) => formatManagerRunContext(binding, run)).join("\n")
+      : "No queued, running, or failed worker runs.",
+    "",
+    "Recent manager event log:",
+    events.length > 0
+      ? events.map((event) => formatManagerEventContext(event)).join("\n")
+      : "No manager events recorded yet.",
+  ].join("\n");
+}
+
+function formatManagerTopicContext(storage: Storage, binding: TopicBinding): string {
+  const active = storage.getActiveRun(binding.id);
+  const latest = storage.getLatestRun(binding.id);
+  const run = active ?? latest;
+  const runSummary = run ? `run #${run.id} ${run.status}: ${oneLine(run.prompt, 120)}` : "no runs";
+  return `- ${topicDisplayName(binding)} (topic ${binding.messageThreadId}) repo=${binding.repoPath} status=${binding.status}; ${runSummary}`;
+}
+
+function formatManagerRunContext(binding: TopicBinding, run: RunRecord): string {
+  const result = run.finalMessage ?? run.errorMessage ?? "";
+  const suffix = result ? ` result=${oneLine(result, 180)}` : "";
+  return `- #${run.id} ${run.status} topic=${topicDisplayName(binding)} prompt=${oneLine(run.prompt, 180)}${suffix}`;
+}
+
+function formatManagerEventContext(event: { createdAt: string; eventType: string; sourceMessageThreadId: number; runId: number | null; summary: string }): string {
+  const runPart = event.runId === null ? "" : ` run=#${event.runId}`;
+  return `- ${event.createdAt} ${event.eventType} topic=${event.sourceMessageThreadId}${runPart}: ${oneLine(event.summary, 220)}`;
 }
 
 function formatManagerRunLine(binding: TopicBinding, run: RunRecord): string {

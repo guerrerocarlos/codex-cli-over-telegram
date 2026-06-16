@@ -52,6 +52,18 @@ interface PendingContextFileRow {
   created_at: string;
 }
 
+interface ManagerEventRow {
+  id: number;
+  chat_id: number;
+  source_message_thread_id: number;
+  binding_id: number | null;
+  run_id: number | null;
+  event_type: string;
+  summary: string;
+  details_json: string;
+  created_at: string;
+}
+
 export interface PendingContextFileRecord {
   id: number;
   bindingId: number;
@@ -64,12 +76,34 @@ export interface PendingContextFileRecord {
   createdAt: string;
 }
 
+export interface ManagerEventRecord {
+  id: number;
+  chatId: number;
+  sourceMessageThreadId: number;
+  bindingId: number | null;
+  runId: number | null;
+  eventType: string;
+  summary: string;
+  details: Record<string, unknown>;
+  createdAt: string;
+}
+
 export interface PendingContextFileInput {
   kind: string;
   relativePath: string;
   originalName: string | null;
   mimeType: string | null;
   fileSize: number;
+}
+
+export interface ManagerEventInput {
+  chatId: number;
+  sourceMessageThreadId: number;
+  bindingId: number | null;
+  runId: number | null;
+  eventType: string;
+  summary: string;
+  details: Record<string, unknown>;
 }
 
 function now(): string {
@@ -135,6 +169,29 @@ function mapPendingContextFile(row: PendingContextFileRow): PendingContextFileRe
     fileSize: row.file_size,
     createdAt: row.created_at,
   };
+}
+
+function mapManagerEvent(row: ManagerEventRow): ManagerEventRecord {
+  return {
+    id: row.id,
+    chatId: row.chat_id,
+    sourceMessageThreadId: row.source_message_thread_id,
+    bindingId: row.binding_id,
+    runId: row.run_id,
+    eventType: row.event_type,
+    summary: row.summary,
+    details: parseJsonObject(row.details_json),
+    createdAt: row.created_at,
+  };
+}
+
+function parseJsonObject(value: string): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
+  } catch {
+    return {};
+  }
 }
 
 export class Storage {
@@ -211,6 +268,18 @@ export class Storage {
         original_name TEXT,
         mime_type TEXT,
         file_size INTEGER NOT NULL,
+        created_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS manager_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        chat_id INTEGER NOT NULL,
+        source_message_thread_id INTEGER NOT NULL,
+        binding_id INTEGER REFERENCES topic_bindings(id) ON DELETE SET NULL,
+        run_id INTEGER REFERENCES runs(id) ON DELETE SET NULL,
+        event_type TEXT NOT NULL,
+        summary TEXT NOT NULL,
+        details_json TEXT NOT NULL,
         created_at TEXT NOT NULL
       );
     `);
@@ -556,6 +625,35 @@ export class Storage {
       return files;
     });
     return tx();
+  }
+
+  addManagerEvent(input: ManagerEventInput): void {
+    this.db
+      .prepare(
+        `
+        INSERT INTO manager_events (
+          chat_id, source_message_thread_id, binding_id, run_id, event_type, summary, details_json, created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      )
+      .run(
+        input.chatId,
+        input.sourceMessageThreadId,
+        input.bindingId,
+        input.runId,
+        input.eventType,
+        input.summary,
+        JSON.stringify(input.details),
+        now(),
+      );
+  }
+
+  listManagerEvents(chatId: number, limit: number): ManagerEventRecord[] {
+    const rows = this.db
+      .prepare("SELECT * FROM manager_events WHERE chat_id = ? ORDER BY id DESC LIMIT ?")
+      .all(chatId, limit) as ManagerEventRow[];
+    return rows.map(mapManagerEvent);
   }
 
   audit(input: {
