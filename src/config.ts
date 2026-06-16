@@ -194,7 +194,7 @@ export function loadConfig(): AppConfig {
     alwaysYoloMode: parseBoolean("CODEX_ALWAYS_YOLO", false),
     maxParallelRuns: parseInteger("MAX_PARALLEL_RUNS", 4),
     maxTelegramMessageChars: parseInteger("MAX_TELEGRAM_MESSAGE_CHARS", 3500),
-    telegramSendIntervalMs: parseInteger("TELEGRAM_SEND_INTERVAL_MS", 1500),
+    telegramSendIntervalMs: parseInteger("TELEGRAM_SEND_INTERVAL_MS", 3500),
     telegramAgentStreaming: parseBoolean("TELEGRAM_AGENT_STREAMING", true),
     telegramStreamFlushMs: parseInteger("TELEGRAM_STREAM_FLUSH_MS", 1000),
     telegramStreamMinChars: parseInteger("TELEGRAM_STREAM_MIN_CHARS", 120),
