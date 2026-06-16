@@ -328,19 +328,19 @@ export function createTelegramBot(
     }
 
     try {
-      const models = await listModelOptions(config, binding.modelProvider);
+      const models = await listAllModelOptions(config);
       if (models.length === 0) {
-        await reply(ctx, `No ${providerLabel(binding.modelProvider)} models are configured.`, config);
+        await reply(ctx, "No models are configured.", config);
         return;
       }
       await replyWithModelKeyboard(
         ctx,
         config,
         [
-          `Available ${providerLabel(binding.modelProvider)} models:`,
+          "Available models:",
           "",
           `Current: ${await modelLabel(config, binding)}`,
-          "Tap a button to set this topic's model.",
+          "Tap a button to set this topic's provider and model.",
         ].join("\n"),
         modelKeyboard(models, binding.modelProvider, binding.model),
       );
@@ -376,12 +376,14 @@ export function createTelegramBot(
 
     try {
       const requested = parseRequestedModel(binding.modelProvider, requestedModel);
-      const models = await listModelOptions(config, requested.provider);
-      const match = models.find((model) => model.model === requested.model || model.id === requested.model);
+      const models = requested.explicitProvider
+        ? await listModelOptions(config, requested.provider)
+        : await listAllModelOptions(config);
+      const match = findModelMatch(models, requested.model, binding.modelProvider);
       if (!match) {
         await reply(
           ctx,
-          [`Unknown ${providerLabel(requested.provider)} model:`, codeBlock(requested.model), "", "Use /models to list available models for the current provider."].join("\n"),
+          [`Unknown model:`, codeBlock(requested.model), "", "Use /models to list available models."].join("\n"),
           config,
         );
         return;
@@ -1960,9 +1962,9 @@ async function sendChatAction(bot: Bot, binding: TopicBinding): Promise<void> {
 
 async function sendModelSwitcher(ctx: Context, config: AppConfig, binding: TopicBinding): Promise<void> {
   try {
-    const models = await listModelOptions(config, binding.modelProvider);
+    const models = await listAllModelOptions(config);
     if (models.length === 0) {
-      await reply(ctx, `No ${providerLabel(binding.modelProvider)} models are configured.`, config);
+      await reply(ctx, "No models are configured.", config);
       return;
     }
 
@@ -1970,10 +1972,10 @@ async function sendModelSwitcher(ctx: Context, config: AppConfig, binding: Topic
       ctx,
       config,
       [
-        `Choose ${providerLabel(binding.modelProvider)} model for this topic.`,
+        "Choose model for this topic.",
         "",
         `Current: ${await modelLabel(config, binding)}`,
-        "The next run will use the selected model in this thread.",
+        "The next run will use the selected provider and model in this thread.",
       ].join("\n"),
       modelKeyboard(models, binding.modelProvider, binding.model),
     );
@@ -2003,15 +2005,36 @@ async function listModelOptions(config: AppConfig, provider: ModelProvider): Pro
   }));
 }
 
-function parseRequestedModel(currentProvider: ModelProvider, input: string): { provider: ModelProvider; model: string } {
+async function listAllModelOptions(config: AppConfig): Promise<ModelOption[]> {
+  const [openaiModels, xaiModels] = await Promise.all([
+    listModelOptions(config, "openai").catch(() => []),
+    listModelOptions(config, "xai").catch(() => []),
+  ]);
+  return [...openaiModels, ...xaiModels];
+}
+
+function parseRequestedModel(
+  currentProvider: ModelProvider,
+  input: string,
+): { provider: ModelProvider; model: string; explicitProvider: boolean } {
   const [prefix, ...rest] = input.split(":");
   if (prefix && rest.length > 0) {
     const provider = providerFromAlias(prefix);
     if (provider) {
-      return { provider, model: rest.join(":").trim() };
+      return { provider, model: rest.join(":").trim(), explicitProvider: true };
     }
   }
-  return { provider: currentProvider, model: input.trim() };
+  return { provider: currentProvider, model: input.trim(), explicitProvider: false };
+}
+
+function findModelMatch(models: ModelOption[], requestedModel: string, currentProvider: ModelProvider): ModelOption | undefined {
+  return (
+    models.find(
+      (model) =>
+        model.provider === currentProvider &&
+        (model.model === requestedModel || model.id === requestedModel),
+    ) ?? models.find((model) => model.model === requestedModel || model.id === requestedModel)
+  );
 }
 
 function modelKeyboard(models: ModelOption[], currentProvider: ModelProvider, currentModel: string | null): InlineKeyboard {
@@ -2024,7 +2047,7 @@ function modelKeyboard(models: ModelOption[], currentProvider: ModelProvider, cu
       continue;
     }
     const isCurrent = currentProvider === model.provider && currentModel === model.model;
-    const label = `${model.displayName || model.model}${isCurrent ? " (current)" : ""}`;
+    const label = `${providerLabel(model.provider)}: ${model.displayName || model.model}${isCurrent ? " (current)" : ""}`;
     keyboard.text(label.slice(0, 56), callbackData).row();
   }
 
