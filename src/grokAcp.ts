@@ -47,7 +47,9 @@ export class GrokAcpBackend implements CodexBackend {
     }
 
     const connection = new acp.ClientSideConnection(
-      () => new TelegramAcpClient(events, request),
+      () => new TelegramAcpClient(events, request, (text) => {
+        finalMessage = text;
+      }),
       acp.ndJsonStream(Writable.toWeb(proc.stdin), Readable.toWeb(proc.stdout)),
     );
 
@@ -99,9 +101,6 @@ export class GrokAcpBackend implements CodexBackend {
         .finally(() => events.close());
 
       for await (const event of events) {
-        if (event.type === "agent_message") {
-          finalMessage = event.text;
-        }
         yield event;
       }
 
@@ -157,10 +156,12 @@ export class GrokAcpBackend implements CodexBackend {
 
 class TelegramAcpClient {
   private readonly toolLabels = new Map<string, string>();
+  private readonly agentMessages = new Map<string, string>();
 
   constructor(
     private readonly events: AsyncQueue<CodexRunEvent>,
     private readonly request: CodexRunRequest,
+    private readonly onAgentMessage: (text: string) => void,
   ) {}
 
   async sessionUpdate(params: acp.SessionNotification): Promise<void> {
@@ -168,7 +169,10 @@ class TelegramAcpClient {
     switch (update.sessionUpdate) {
       case "agent_message_chunk":
         if (update.content.type === "text") {
-          this.events.push({ type: "agent_message", text: update.content.text });
+          const messageId = update.messageId ?? "default";
+          const text = `${this.agentMessages.get(messageId) ?? ""}${update.content.text}`;
+          this.agentMessages.set(messageId, text);
+          this.onAgentMessage([...this.agentMessages.values()].join("\n\n"));
         }
         return;
       case "agent_thought_chunk":
