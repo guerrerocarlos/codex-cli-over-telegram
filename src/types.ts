@@ -1,6 +1,6 @@
 export type SandboxMode = "read-only" | "workspace-write" | "danger-full-access";
 
-export type ModelProvider = "openai" | "xai";
+export type ModelProvider = "openai" | "xai" | "claude";
 
 export type RunStatus = "queued" | "running" | "completed" | "failed" | "stopped";
 

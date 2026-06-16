@@ -26,7 +26,7 @@ import {
   type CodexConfigSnapshot,
   type CodexModelInfo,
 } from "./codexMetadata.js";
-import { providerFromAlias, providerLabel, xaiModelOptions } from "./modelProviders.js";
+import { claudeModelOptions, providerFromAlias, providerLabel, xaiModelOptions } from "./modelProviders.js";
 import { logger } from "./logger.js";
 import { TelegramSendQueue } from "./telegramSendQueue.js";
 import { TelegramRichDraftStreamer } from "./telegramRichStream.js";
@@ -421,7 +421,7 @@ export function createTelegramBot(
         [
           `Current provider:\n${codeBlock(providerLabel(binding.modelProvider))}`,
           "",
-          "Use `/provider openai` or `/provider xai`.",
+          "Use `/provider openai`, `/provider xai`, or `/provider claude`.",
         ].join("\n"),
         config,
       );
@@ -430,7 +430,7 @@ export function createTelegramBot(
 
     const provider = providerFromAlias(requestedProvider);
     if (!provider) {
-      await reply(ctx, `Unknown provider:\n${codeBlock(requestedProvider)}\n\nUse openai or xai.`, config);
+      await reply(ctx, `Unknown provider:\n${codeBlock(requestedProvider)}\n\nUse openai, xai, or claude.`, config);
       return;
     }
 
@@ -607,8 +607,12 @@ export function createTelegramBot(
       await reply(ctx, "No agent thread exists for this topic yet. Send a prompt first, or use /new for clean context.", config);
       return;
     }
-    if (binding.modelProvider === "xai") {
-      await reply(ctx, "Grok ACP sessions do not support Telegram-triggered compaction yet. Use /new for a fresh Grok session.", config);
+    if (binding.modelProvider !== "openai") {
+      await reply(
+        ctx,
+        `${providerLabel(binding.modelProvider)} ACP sessions do not support Telegram-triggered compaction yet. Use /new for a fresh session.`,
+        config,
+      );
       return;
     }
     if (!codex.compactThread) {
@@ -1620,7 +1624,7 @@ async function executeRun(
       }
 
       if (event.type === "agent_message_delta") {
-        if (config.telegramAgentStreaming && binding.modelProvider === "xai") {
+        if (config.telegramAgentStreaming && binding.modelProvider !== "openai") {
           richStreamer ??= new TelegramRichDraftStreamer(config, binding);
           richStreamer.append(event.text);
           await richStreamer.flush();
@@ -2012,6 +2016,9 @@ async function listModelOptions(config: AppConfig, provider: ModelProvider): Pro
   if (provider === "xai") {
     return xaiModelOptions(config);
   }
+  if (provider === "claude") {
+    return claudeModelOptions(config);
+  }
 
   const models = await listCodexModels(config.codexBin);
   return models.flatMap((model) => {
@@ -2038,11 +2045,12 @@ async function listModelOptions(config: AppConfig, provider: ModelProvider): Pro
 }
 
 async function listAllModelOptions(config: AppConfig): Promise<ModelOption[]> {
-  const [openaiModels, xaiModels] = await Promise.all([
+  const [openaiModels, xaiModels, claudeModels] = await Promise.all([
     listModelOptions(config, "openai").catch(() => []),
     listModelOptions(config, "xai").catch(() => []),
+    listModelOptions(config, "claude").catch(() => []),
   ]);
-  return [...openaiModels, ...xaiModels];
+  return [...openaiModels, ...xaiModels, ...claudeModels];
 }
 
 function parseRequestedModel(
@@ -2402,11 +2410,14 @@ async function modelLabel(config: AppConfig, binding: TopicBinding): Promise<str
   if (binding.modelProvider === "xai") {
     return `${providerLabel(binding.modelProvider)} / (provider default)`;
   }
+  if (binding.modelProvider === "claude") {
+    return `${providerLabel(binding.modelProvider)} / (provider default)`;
+  }
   return globalModelLabel(config, binding.repoPath);
 }
 
 async function globalModelLabel(config: AppConfig, cwd?: string): Promise<string> {
-  if (config.defaultModelProvider === "xai") {
+  if (config.defaultModelProvider === "xai" || config.defaultModelProvider === "claude") {
     return `${providerLabel(config.defaultModelProvider)} / (provider default)`;
   }
   try {
@@ -2582,7 +2593,7 @@ function helpText(): string {
     "/bind <absolute_repo_path> - bind this topic to a git repo",
     "/create <folder> - create a folder, topic, and binding",
     "/where - show repo, branch, mode, and git status",
-    "/provider - show or set this topic's provider: openai or xai",
+    "/provider - show or set this topic's provider: openai, xai, or claude",
     "/models - list available models for this topic's provider",
     "/model - show or set this topic's model",
     "/plan - show or toggle plan mode for this topic",
@@ -2614,7 +2625,7 @@ export function telegramCommandMenu(): Array<{ command: string; description: str
     { command: "bind", description: "Bind this topic to a folder" },
     { command: "create", description: "Create a folder and topic" },
     { command: "where", description: "Show this topic binding and status" },
-    { command: "provider", description: "Set OpenAI or xAI provider" },
+    { command: "provider", description: "Set model provider" },
     { command: "models", description: "List available provider models" },
     { command: "model", description: "Show or set this topic model" },
     { command: "plan", description: "Show or toggle plan mode" },

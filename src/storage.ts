@@ -170,7 +170,10 @@ function mapBinding(row: BindingRow): TopicBinding {
 }
 
 function normalizeModelProvider(value: string | null): ModelProvider {
-  return value === "xai" ? "xai" : "openai";
+  if (value === "xai" || value === "claude") {
+    return value;
+  }
+  return "openai";
 }
 
 function parseTokenUsage(value: string | null): ThreadTokenUsageSnapshot | null {

@@ -4,6 +4,7 @@ export class ProviderRouterBackend implements CodexBackend {
   constructor(
     private readonly openaiBackend: CodexBackend,
     private readonly xaiBackend: CodexBackend,
+    private readonly claudeBackend: CodexBackend,
   ) {}
 
   run(request: CodexRunRequest): AsyncIterable<CodexRunEvent> {
@@ -14,6 +15,7 @@ export class ProviderRouterBackend implements CodexBackend {
     return Promise.all([
       this.openaiBackend.interrupt(bindingId),
       this.xaiBackend.interrupt(bindingId),
+      this.claudeBackend.interrupt(bindingId),
     ]).then((results) => results.some(Boolean));
   }
 
@@ -22,6 +24,9 @@ export class ProviderRouterBackend implements CodexBackend {
       return true;
     }
     if (this.xaiBackend.steer && (await this.xaiBackend.steer(bindingId, prompt))) {
+      return true;
+    }
+    if (this.claudeBackend.steer && (await this.claudeBackend.steer(bindingId, prompt))) {
       return true;
     }
     return false;
@@ -35,6 +40,12 @@ export class ProviderRouterBackend implements CodexBackend {
   }
 
   private backendFor(request: CodexRunRequest): CodexBackend {
-    return request.modelProvider === "xai" ? this.xaiBackend : this.openaiBackend;
+    if (request.modelProvider === "xai") {
+      return this.xaiBackend;
+    }
+    if (request.modelProvider === "claude") {
+      return this.claudeBackend;
+    }
+    return this.openaiBackend;
   }
 }

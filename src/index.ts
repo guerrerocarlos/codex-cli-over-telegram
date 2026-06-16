@@ -3,7 +3,7 @@ import { loadConfig } from "./config.js";
 import { Storage } from "./storage.js";
 import { CodexAppServerBackend } from "./codexAppServer.js";
 import { CodexExecBackend } from "./codexExec.js";
-import { GrokAcpBackend } from "./grokAcp.js";
+import { ClaudeAcpBackend, GrokAcpBackend } from "./grokAcp.js";
 import { ProviderRouterBackend } from "./providerRouter.js";
 import { RunQueue } from "./runQueue.js";
 import { createTelegramBot, handleTelegramBridgeRequest, telegramCommandMenu } from "./telegram.js";
@@ -19,7 +19,7 @@ async function main(): Promise<void> {
     config.codexBackend === "app-server"
       ? new CodexAppServerBackend(config)
       : new CodexExecBackend(config);
-  const codex = new ProviderRouterBackend(openaiBackend, new GrokAcpBackend(config));
+  const codex = new ProviderRouterBackend(openaiBackend, new GrokAcpBackend(config), new ClaudeAcpBackend(config));
   const healthServer = startHealthServer(config, async (request) =>
     handleTelegramBridgeRequest({
       storage,

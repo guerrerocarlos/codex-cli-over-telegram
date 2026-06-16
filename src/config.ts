@@ -24,6 +24,9 @@ export interface AppConfig {
   openaiServiceTiers: string[];
   grokAgentCommand: string;
   grokAgentArgs: string[];
+  claudeAcpCommand: string;
+  claudeAcpArgs: string[];
+  claudeModels: string[];
   defaultSandboxMode: SandboxMode;
   alwaysYoloMode: boolean;
   maxParallelRuns: number;
@@ -123,10 +126,10 @@ function parseCodexBackend(): CodexBackendKind {
 
 function parseModelProvider(name: string, fallback: ModelProvider): ModelProvider {
   const provider = optional(name, fallback);
-  if (provider === "openai" || provider === "xai") {
+  if (provider === "openai" || provider === "xai" || provider === "claude") {
     return provider;
   }
-  throw new Error(`${name} must be openai or xai`);
+  throw new Error(`${name} must be openai, xai, or claude`);
 }
 
 function parseStringList(name: string, fallback: string): string[] {
@@ -156,6 +159,10 @@ function parseBoolean(name: string, fallback: boolean): boolean {
   throw new Error(`${name} must be a boolean`);
 }
 
+function localBin(name: string): string {
+  return path.resolve(process.cwd(), "node_modules", ".bin", name);
+}
+
 export function loadConfig(): AppConfig {
   const databasePath = path.resolve(optional("DATABASE_PATH", "./data/state.sqlite"));
   const managerRepoPath = path.resolve(expandHome(optional("MANAGER_REPO_PATH", "~/topic-zero")));
@@ -180,6 +187,9 @@ export function loadConfig(): AppConfig {
     openaiServiceTiers: parseStringList("OPENAI_SERVICE_TIERS", "fast,flex"),
     grokAgentCommand: optional("GROK_AGENT_COMMAND", "grok"),
     grokAgentArgs: parseStringList("GROK_AGENT_ARGS", "agent,stdio"),
+    claudeAcpCommand: optional("CLAUDE_ACP_COMMAND", localBin("claude-agent-acp")),
+    claudeAcpArgs: parseStringList("CLAUDE_ACP_ARGS", ""),
+    claudeModels: parseStringList("CLAUDE_MODELS", "sonnet,opus,fable"),
     defaultSandboxMode: parseSandboxMode(),
     alwaysYoloMode: parseBoolean("CODEX_ALWAYS_YOLO", false),
     maxParallelRuns: parseInteger("MAX_PARALLEL_RUNS", 4),

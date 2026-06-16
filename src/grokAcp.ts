@@ -12,13 +12,21 @@ interface ActiveAcpTurn {
   proc: ChildProcess;
 }
 
-export class GrokAcpBackend implements CodexBackend {
+interface AcpAgentBackendOptions {
+  label: string;
+  command: string;
+  args: string[];
+  modelInsertBefore?: string;
+  yoloArgs?: string[];
+}
+
+export class AcpAgentBackend implements CodexBackend {
   private readonly active = new Map<number, ActiveAcpTurn>();
 
-  constructor(private readonly config: AppConfig) {}
+  constructor(private readonly options: AcpAgentBackendOptions) {}
 
   async *run(request: CodexRunRequest): AsyncIterable<CodexRunEvent> {
-    const proc = spawn(this.config.grokAgentCommand, grokAgentArgsForRequest(this.config, request), {
+    const proc = spawn(this.options.command, acpAgentArgsForRequest(this.options, request), {
       cwd: request.repoPath,
       env: process.env,
       stdio: ["pipe", "pipe", "pipe"],
@@ -35,19 +43,22 @@ export class GrokAcpBackend implements CodexBackend {
     });
 
     proc.once("error", (error) => {
-      logger.error("grok acp process error", { bindingId: request.bindingId, error: error.message });
+      logger.error(`${this.options.label.toLowerCase()} acp process error`, {
+        bindingId: request.bindingId,
+        error: error.message,
+      });
       events.push({ type: "failed", error: error.message });
       events.close();
     });
 
     if (!proc.stdin || !proc.stdout) {
       proc.kill();
-      yield { type: "failed", error: "Grok ACP process did not expose stdio pipes." };
+      yield { type: "failed", error: `${this.options.label} ACP process did not expose stdio pipes.` };
       return;
     }
 
     const connection = new acp.ClientSideConnection(
-      () => new TelegramAcpClient(events, request, (text) => {
+      () => new TelegramAcpClient(this.options.label, events, request, (text) => {
         finalMessage = text;
       }),
       acp.ndJsonStream(Writable.toWeb(proc.stdin), Readable.toWeb(proc.stdout)),
@@ -74,7 +85,7 @@ export class GrokAcpBackend implements CodexBackend {
       events.push({
         type: "started",
         threadId: session.sessionId,
-        text: `Started Grok ACP session ${session.sessionId}`,
+        text: `Started ${this.options.label} ACP session ${session.sessionId}`,
       });
 
       const promptPromise = connection
@@ -87,9 +98,9 @@ export class GrokAcpBackend implements CodexBackend {
           if (stopReason === "end_turn") {
             events.push({ type: "completed", finalMessage });
           } else if (stopReason === "cancelled") {
-            events.push({ type: "failed", error: "Grok ACP turn was cancelled." });
+            events.push({ type: "failed", error: `${this.options.label} ACP turn was cancelled.` });
           } else {
-            events.push({ type: "completed", finalMessage: finalMessage || `Grok stopped: ${stopReason}` });
+            events.push({ type: "completed", finalMessage: finalMessage || `${this.options.label} stopped: ${stopReason}` });
           }
         })
         .catch((error) => {
@@ -140,7 +151,7 @@ export class GrokAcpBackend implements CodexBackend {
         });
         return { sessionId: request.codexThreadId };
       } catch (error) {
-        logger.warn("failed to resume grok acp session; starting a new one", {
+        logger.warn(`failed to resume ${this.options.label.toLowerCase()} acp session; starting a new one`, {
           sessionId: request.codexThreadId,
           error: error instanceof Error ? error.message : String(error),
         });
@@ -154,11 +165,34 @@ export class GrokAcpBackend implements CodexBackend {
   }
 }
 
+export class GrokAcpBackend extends AcpAgentBackend {
+  constructor(config: AppConfig) {
+    super({
+      label: "Grok",
+      command: config.grokAgentCommand,
+      args: config.grokAgentArgs,
+      modelInsertBefore: "stdio",
+      yoloArgs: ["--always-approve"],
+    });
+  }
+}
+
+export class ClaudeAcpBackend extends AcpAgentBackend {
+  constructor(config: AppConfig) {
+    super({
+      label: "Claude",
+      command: config.claudeAcpCommand,
+      args: config.claudeAcpArgs,
+    });
+  }
+}
+
 class TelegramAcpClient {
   private readonly toolLabels = new Map<string, string>();
   private readonly agentMessages = new Map<string, string>();
 
   constructor(
+    private readonly label: string,
     private readonly events: AsyncQueue<CodexRunEvent>,
     private readonly request: CodexRunRequest,
     private readonly onAgentMessage: (text: string) => void,
@@ -196,7 +230,7 @@ class TelegramAcpClient {
         this.events.push({ type: "token_usage", tokenUsage: acpUsageToThreadUsage(update) });
         return;
       case "plan":
-        this.events.push({ type: "progress", text: "Grok produced a plan." });
+        this.events.push({ type: "progress", text: `${this.label} produced a plan.` });
         return;
       default:
         return;
@@ -215,7 +249,7 @@ class TelegramAcpClient {
       return { outcome: { outcome: "cancelled" } };
     }
 
-    this.events.push({ type: "progress", text: `Grok permission: ${params.toolCall.title} -> ${preferred.name}` });
+    this.events.push({ type: "progress", text: `${this.label} permission: ${params.toolCall.title} -> ${preferred.name}` });
     return { outcome: { outcome: "selected", optionId: preferred.optionId } };
   }
 
@@ -321,16 +355,16 @@ function acpUsageToThreadUsage(update: acp.UsageUpdate): ThreadTokenUsageSnapsho
   };
 }
 
-function grokAgentArgsForRequest(config: AppConfig, request: CodexRunRequest): string[] {
-  const args = [...config.grokAgentArgs];
-  const stdioIndex = args.lastIndexOf("stdio");
-  const insertIndex = stdioIndex >= 0 ? stdioIndex : args.length;
+function acpAgentArgsForRequest(options: AcpAgentBackendOptions, request: CodexRunRequest): string[] {
+  const args = [...options.args];
+  const insertBeforeIndex = options.modelInsertBefore ? args.lastIndexOf(options.modelInsertBefore) : -1;
+  const insertIndex = insertBeforeIndex >= 0 ? insertBeforeIndex : args.length;
 
   if (request.model) {
     args.splice(insertIndex, 0, "--model", request.model);
   }
-  if (request.sandboxMode === "danger-full-access") {
-    args.splice(insertIndex, 0, "--always-approve");
+  if (request.sandboxMode === "danger-full-access" && options.yoloArgs) {
+    args.splice(insertIndex, 0, ...options.yoloArgs);
   }
 
   return args;

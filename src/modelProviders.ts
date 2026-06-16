@@ -10,7 +10,13 @@ export interface ProviderModelOption {
 }
 
 export function providerLabel(provider: ModelProvider): string {
-  return provider === "xai" ? "xAI/Grok" : "OpenAI";
+  if (provider === "xai") {
+    return "xAI/Grok";
+  }
+  if (provider === "claude") {
+    return "Claude";
+  }
+  return "OpenAI";
 }
 
 export function providerFromAlias(value: string): ModelProvider | null {
@@ -20,6 +26,9 @@ export function providerFromAlias(value: string): ModelProvider | null {
   }
   if (normalized === "xai" || normalized === "grok") {
     return "xai";
+  }
+  if (normalized === "claude" || normalized === "anthropic") {
+    return "claude";
   }
   return null;
 }
@@ -34,9 +43,22 @@ export function xaiModelOptions(config: AppConfig): ProviderModelOption[] {
   }));
 }
 
+export function claudeModelOptions(config: AppConfig): ProviderModelOption[] {
+  return config.claudeModels.map((model) => ({
+    provider: "claude",
+    id: `claude:${model}`,
+    model,
+    serviceTier: null,
+    displayName: model,
+  }));
+}
+
 export function codexProviderArgs(config: AppConfig, provider: ModelProvider): string[] {
   if (provider === "openai") {
     return ["-c", 'model_provider="openai"'];
+  }
+  if (provider === "claude") {
+    throw new Error("Claude is only supported through the ACP backend.");
   }
 
   return [

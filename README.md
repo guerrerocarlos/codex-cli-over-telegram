@@ -36,6 +36,9 @@ OPENAI_SERVICE_TIERS=fast,flex
 XAI_MODELS=grok-build-0.1,grok-4.3
 GROK_AGENT_COMMAND=grok
 GROK_AGENT_ARGS=agent,stdio
+CLAUDE_MODELS=sonnet,opus,fable
+CLAUDE_ACP_COMMAND=./node_modules/.bin/claude-agent-acp
+CLAUDE_ACP_ARGS=
 ALLOW_UNTHREADED_CHATS=true
 CODEX_ALWAYS_YOLO=false
 TELEGRAM_SEND_INTERVAL_MS=1500
@@ -56,6 +59,15 @@ grok login
 ```
 
 For systemd, use an absolute `GROK_AGENT_COMMAND` such as `/home/gnu/.local/bin/grok` if `grok` is not on the service `PATH`.
+
+To use Claude through ACP, install this app's dependencies and authenticate Claude for the service user:
+
+```bash
+npm install
+claude auth
+```
+
+The default `CLAUDE_ACP_COMMAND` uses the repo-local `./node_modules/.bin/claude-agent-acp` adapter installed by npm. Set `CLAUDE_MODELS` to the Claude model aliases you want to show in `/models`.
 
 Start Codex CLI over Telegram:
 
@@ -87,11 +99,13 @@ Useful commands:
 /where
 /provider
 /provider xai
+/provider claude
 /models
 /model
 /model gpt-5.5
 /model gpt-5.5 fast
 /model xai:grok-build-0.1
+/model claude:sonnet
 /plan on
 /plan off
 /mode read
@@ -225,6 +239,9 @@ OPENAI_SERVICE_TIERS=fast,flex
 XAI_MODELS=grok-build-0.1,grok-4.3
 GROK_AGENT_COMMAND=/home/gnu/.local/bin/grok
 GROK_AGENT_ARGS=agent,stdio
+CLAUDE_MODELS=sonnet,opus,fable
+CLAUDE_ACP_COMMAND=/path/to/app/node_modules/.bin/claude-agent-acp
+CLAUDE_ACP_ARGS=
 DEFAULT_SANDBOX_MODE=read-only
 CODEX_ALWAYS_YOLO=false
 ALLOW_UNTHREADED_CHATS=true
