@@ -401,7 +401,7 @@ export class Storage {
 
   updateBindingModel(bindingId: number, model: string | null): void {
     this.db
-      .prepare("UPDATE topic_bindings SET model = ?, codex_thread_id = NULL, token_usage_json = NULL, updated_at = ? WHERE id = ?")
+      .prepare("UPDATE topic_bindings SET model = ?, updated_at = ? WHERE id = ?")
       .run(model, now(), bindingId);
   }
 

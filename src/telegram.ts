@@ -395,7 +395,7 @@ export function createTelegramBot(
       });
       await reply(
         ctx,
-        [`Topic model set to:`, codeBlock(match.model), "", "A fresh Codex session will start on the next run."].join("\n"),
+        [`Topic model set to:`, codeBlock(match.model), "", "The next run will use the new model in this thread."].join("\n"),
         config,
       );
     } catch (error) {
@@ -446,7 +446,7 @@ export function createTelegramBot(
       await ctx.answerCallbackQuery({ text: `Model set to ${match.model}.` });
       await reply(
         ctx,
-        [`Topic model set to:`, codeBlock(match.model), "", "A fresh Codex session will start on the next run."].join("\n"),
+        [`Topic model set to:`, codeBlock(match.model), "", "The next run will use the new model in this thread."].join("\n"),
         config,
       );
     } catch (error) {
@@ -1898,7 +1898,7 @@ async function sendModelSwitcher(ctx: Context, config: AppConfig, binding: Topic
         "Choose model for this topic.",
         "",
         `Current: ${await modelLabel(config, binding)}`,
-        "A fresh Codex session starts after changing the model.",
+        "The next run will use the selected model in this thread.",
       ].join("\n"),
       modelKeyboard(models, binding.model),
     );
