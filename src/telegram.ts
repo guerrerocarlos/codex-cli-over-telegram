@@ -1783,7 +1783,8 @@ async function reply(
     return;
   }
   const messageThreadId = ctx.message?.message_thread_id ?? ctx.callbackQuery?.message?.message_thread_id;
-  for (const chunk of markdownV2Chunks(text, config.maxTelegramMessageChars)) {
+  const replyToMessageId = ctx.message?.message_id ?? ctx.callbackQuery?.message?.message_id;
+  for (const [index, chunk] of markdownV2Chunks(text, config.maxTelegramMessageChars).entries()) {
     const options =
       typeof messageThreadId === "number"
         ? {
@@ -1791,11 +1792,27 @@ async function reply(
             link_preview_options: { is_disabled: true },
             parse_mode: "MarkdownV2" as const,
             disable_notification: true,
+            ...(index === 0 && replyToMessageId
+              ? {
+                  reply_parameters: {
+                    message_id: replyToMessageId,
+                    allow_sending_without_reply: true,
+                  },
+                }
+              : {}),
           }
         : {
             link_preview_options: { is_disabled: true },
             parse_mode: "MarkdownV2" as const,
             disable_notification: true,
+            ...(index === 0 && replyToMessageId
+              ? {
+                  reply_parameters: {
+                    message_id: replyToMessageId,
+                    allow_sending_without_reply: true,
+                  },
+                }
+              : {}),
           };
     await sendQueue.sendMessage(ctx.api, chatId, chunk, options);
   }
@@ -1813,6 +1830,7 @@ async function replyWithModelKeyboard(
     return;
   }
   const messageThreadId = ctx.message?.message_thread_id ?? ctx.callbackQuery?.message?.message_thread_id;
+  const replyToMessageId = ctx.message?.message_id ?? ctx.callbackQuery?.message?.message_id;
   const chunks = markdownV2Chunks(text, config.maxTelegramMessageChars);
   const first = chunks[0] ?? "";
   const options = {
@@ -1820,6 +1838,14 @@ async function replyWithModelKeyboard(
     link_preview_options: { is_disabled: true },
     parse_mode: "MarkdownV2" as const,
     disable_notification: true,
+    ...(replyToMessageId
+      ? {
+          reply_parameters: {
+            message_id: replyToMessageId,
+            allow_sending_without_reply: true,
+          },
+        }
+      : {}),
     reply_markup: keyboard,
   };
   await sendQueue.sendMessage(ctx.api, chatId, first, options);
