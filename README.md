@@ -107,6 +107,8 @@ Useful commands:
 /model xai:grok-build-0.1
 /model claude:sonnet
 /plan outline the implementation before editing
+/planon
+/planoff
 /mode read
 /mode write
 /status

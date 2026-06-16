@@ -212,6 +212,7 @@ export function createTelegramBot(
           "",
           `Branch:\n${codeBlock(branch)}`,
           `Model:\n${codeBlock(await modelLabel(config, binding))}`,
+          `Plan mode:\n${codeBlock(formatPlanMode(binding.planMode))}`,
           `Mode:\n${codeBlock(effectiveRunSandboxMode(config, binding))}`,
           isRepo ? null : "Git commands are unavailable until this path is initialized as a repo.",
           renameResult,
@@ -311,6 +312,7 @@ export function createTelegramBot(
         codeBlock(binding.repoPath),
         `Branch:\n${codeBlock(branch)}`,
         `Model:\n${codeBlock(await modelLabel(config, binding))}`,
+        `Plan mode:\n${codeBlock(formatPlanMode(binding.planMode))}`,
         `Mode:\n${codeBlock(effectiveRunSandboxMode(config, binding))}`,
         `Codex session:\n${codeBlock(binding.codexThreadId ?? "(new)")}`,
         `Status:\n${codeBlock(binding.status)}`,
@@ -509,6 +511,14 @@ export function createTelegramBot(
     await handlePrompt(ctx, config, storage, codex, bot, queue, text, { planMode: true, forceQueue: true });
   });
 
+  bot.command("planon", async (ctx) => {
+    await setTopicPlanMode(ctx, config, storage, true);
+  });
+
+  bot.command("planoff", async (ctx) => {
+    await setTopicPlanMode(ctx, config, storage, false);
+  });
+
   bot.command("mode", async (ctx) => {
     const binding = await requireBinding(ctx, config, storage);
     if (!binding) {
@@ -661,6 +671,7 @@ export function createTelegramBot(
           `Idle.`,
           `Repo:\n${codeBlock(binding.repoPath)}`,
           `Model:\n${codeBlock(await modelLabel(config, binding))}`,
+          `Plan mode:\n${codeBlock(formatPlanMode(binding.planMode))}`,
           `Mode:\n${codeBlock(effectiveRunSandboxMode(config, binding))}`,
           `Context:\n${codeBlock(formatThreadTokenUsage(binding.tokenUsage))}`,
           usage,
@@ -1365,6 +1376,35 @@ function managerTopicSelectorList(storage: Storage, chatId: number): string {
     .join("\n");
 }
 
+async function setTopicPlanMode(
+  ctx: Context,
+  config: AppConfig,
+  storage: Storage,
+  planMode: boolean,
+): Promise<void> {
+  const binding = await requireBinding(ctx, config, storage);
+  if (!binding) {
+    return;
+  }
+
+  storage.updateBindingPlanMode(binding.id, planMode);
+  storage.audit({
+    telegramUserId: ctx.from?.id ?? null,
+    chatId: binding.chatId,
+    messageThreadId: binding.messageThreadId,
+    eventType: "plan_mode",
+    details: { planMode },
+  });
+  await reply(
+    ctx,
+    [
+      `Plan mode ${planMode ? "enabled" : "disabled"} for ordinary prompts in this topic.`,
+      "Use /plan <prompt> for a one-shot plan-mode request.",
+    ].join("\n"),
+    config,
+  );
+}
+
 async function handlePrompt(
   ctx: Context,
   config: AppConfig,
@@ -1408,7 +1448,7 @@ async function handlePrompt(
 
   const key = topicKey(binding.chatId, binding.messageThreadId);
   const queuedBehind = queue.depth(key);
-  const planMode = options.planMode === true;
+  const planMode = options.planMode ?? binding.planMode;
   const run = storage.createRun(binding.id, ctx.message?.message_id ?? null, promptText, planMode);
 
   if (queuedBehind > 0) {
@@ -2560,6 +2600,8 @@ function helpText(): string {
     "/models - list available models for this topic's provider",
     "/model - show or set this topic's model",
     "/plan <prompt> - run one agent turn in plan mode",
+    "/planon - enable plan mode for ordinary prompts in this topic",
+    "/planoff - disable plan mode for ordinary prompts in this topic",
     "/mode read - use read-only Codex sandbox",
     "/mode write - allow Codex workspace edits",
     "/topic - rename this Telegram topic to the bound folder name",
@@ -2592,6 +2634,8 @@ export function telegramCommandMenu(): Array<{ command: string; description: str
     { command: "models", description: "List available provider models" },
     { command: "model", description: "Show or set this topic model" },
     { command: "plan", description: "Run one turn in plan mode" },
+    { command: "planon", description: "Enable topic plan mode" },
+    { command: "planoff", description: "Disable topic plan mode" },
     { command: "mode", description: "Set read or write sandbox mode" },
     { command: "topic", description: "Rename this Telegram topic" },
     { command: "new", description: "Start a fresh agent thread" },
