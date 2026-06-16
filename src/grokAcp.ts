@@ -156,6 +156,8 @@ export class GrokAcpBackend implements CodexBackend {
 }
 
 class TelegramAcpClient {
+  private readonly toolLabels = new Map<string, string>();
+
   constructor(
     private readonly events: AsyncQueue<CodexRunEvent>,
     private readonly request: CodexRunRequest,
@@ -175,12 +177,14 @@ class TelegramAcpClient {
         }
         return;
       case "tool_call":
-        this.events.push({ type: "command_started", text: update.title });
+        this.toolLabels.set(update.toolCallId, formatToolCall(update));
+        this.events.push({ type: "command_started", text: this.toolLabels.get(update.toolCallId) ?? update.title });
         return;
       case "tool_call_update":
+        this.toolLabels.set(update.toolCallId, formatToolCall(update, this.toolLabels.get(update.toolCallId)));
         this.events.push({
           type: update.status === "completed" ? "command_completed" : "progress",
-          text: `Tool ${update.toolCallId}${update.status ? ` ${update.status}` : " updated"}`,
+          text: `${this.toolLabels.get(update.toolCallId) ?? `Tool ${update.toolCallId}`}${update.status ? ` ${update.status}` : ""}`,
         });
         return;
       case "usage_update":
@@ -217,6 +221,84 @@ class TelegramAcpClient {
   async writeTextFile(): Promise<acp.WriteTextFileResponse> {
     throw new Error("ACP file writes are not enabled for Telegram runs.");
   }
+}
+
+function formatToolCall(tool: acp.ToolCall | acp.ToolCallUpdate, fallback?: string): string {
+  const title = (typeof tool.title === "string" && tool.title.trim()) || fallback || `Tool ${tool.toolCallId}`;
+  const details = [
+    ...formatLocations(tool.locations),
+    ...formatRawObject(tool.rawInput),
+    ...formatContent(tool.content),
+    ...formatRawObject(tool.rawOutput, { output: true }),
+  ];
+  return details.length > 0 ? `${title}: ${dedupe(details).join(", ")}` : title;
+}
+
+function formatLocations(locations: Array<acp.ToolCallLocation> | null | undefined): string[] {
+  if (!locations) {
+    return [];
+  }
+  return locations.map((location) => `${location.path}${location.line ? `:${location.line}` : ""}`);
+}
+
+function formatRawObject(value: unknown, options: { output?: boolean } = {}): string[] {
+  if (!value || typeof value !== "object") {
+    return typeof value === "string" && value.trim() ? [truncateOneLine(value)] : [];
+  }
+
+  const record = value as Record<string, unknown>;
+  const preferredKeys = options.output
+    ? ["path", "file", "file_path", "dir", "directory", "command", "cmd", "query", "pattern", "error"]
+    : ["path", "file", "file_path", "dir", "directory", "command", "cmd", "query", "pattern"];
+  const values = preferredKeys
+    .map((key) => record[key])
+    .flatMap((item) => formatRawValue(item));
+
+  if (values.length > 0) {
+    return values;
+  }
+
+  return [truncateOneLine(JSON.stringify(value))];
+}
+
+function formatRawValue(value: unknown): string[] {
+  if (typeof value === "string" && value.trim()) {
+    return [truncateOneLine(value)];
+  }
+  if (Array.isArray(value)) {
+    return value.flatMap(formatRawValue);
+  }
+  if (value && typeof value === "object") {
+    return [truncateOneLine(JSON.stringify(value))];
+  }
+  return [];
+}
+
+function formatContent(content: Array<acp.ToolCallContent> | null | undefined): string[] {
+  if (!content) {
+    return [];
+  }
+  return content.flatMap((item) => {
+    if (item.type === "content" && item.content.type === "text") {
+      return [truncateOneLine(item.content.text)];
+    }
+    if (item.type === "diff") {
+      return ["diff"];
+    }
+    if (item.type === "terminal") {
+      return [`terminal ${item.terminalId}`];
+    }
+    return [];
+  });
+}
+
+function dedupe(values: string[]): string[] {
+  return [...new Set(values.filter(Boolean))];
+}
+
+function truncateOneLine(value: string, maxLength = 160): string {
+  const oneLine = value.replace(/\s+/g, " ").trim();
+  return oneLine.length > maxLength ? `${oneLine.slice(0, maxLength - 1)}...` : oneLine;
 }
 
 function acpUsageToThreadUsage(update: acp.UsageUpdate): ThreadTokenUsageSnapshot {
