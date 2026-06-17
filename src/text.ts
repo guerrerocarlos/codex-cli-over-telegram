@@ -1,4 +1,5 @@
 export function chunkText(text: string, maxChars: number): string[] {
+  text = wellFormedText(text);
   if (text.length <= maxChars) {
     return [text];
   }
@@ -22,6 +23,7 @@ export function chunkText(text: string, maxChars: number): string[] {
 }
 
 export function truncateText(text: string, maxChars: number): string {
+  text = wellFormedText(text);
   if (text.length <= maxChars) {
     return text;
   }
@@ -33,11 +35,12 @@ const codeBlockSeparator = "\u001f";
 const codeBlockEnd = "\u001e";
 
 export function codeBlock(text: string, language = ""): string {
-  const body = text.trimEnd() || " ";
+  const body = wellFormedText(text).trimEnd() || " ";
   return `${codeBlockStart}${language}${codeBlockSeparator}${body}${codeBlockEnd}`;
 }
 
 export function markdownV2Chunks(text: string, maxChars: number): string[] {
+  text = wellFormedText(text);
   const rendered = renderMarkdownV2(text);
   if (rendered.length <= maxChars) {
     return [rendered];
@@ -204,6 +207,33 @@ function renderInlineCode(body: string): string {
 
 function renderBold(body: string): string {
   return `*${escapeMarkdownV2Text(body)}*`;
+}
+
+function wellFormedText(text: string): string {
+  const maybeWellFormed = text as string & { toWellFormed?: () => string };
+  if (typeof maybeWellFormed.toWellFormed === "function") {
+    return maybeWellFormed.toWellFormed();
+  }
+
+  let output = "";
+  for (let index = 0; index < text.length; index += 1) {
+    const code = text.charCodeAt(index);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = text.charCodeAt(index + 1);
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        output += text[index] ?? "";
+        output += text[index + 1] ?? "";
+        index += 1;
+      } else {
+        output += "\ufffd";
+      }
+    } else if (code >= 0xdc00 && code <= 0xdfff) {
+      output += "\ufffd";
+    } else {
+      output += text[index] ?? "";
+    }
+  }
+  return output;
 }
 
 function minNonNegative(left: number, right: number): number {
