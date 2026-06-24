@@ -31,6 +31,7 @@ export class TelegramSendQueue {
     text: string,
     options: SendMessageOptions,
   ): Promise<SendMessageResult> {
+    let transientFailures = 0;
     for (;;) {
       await this.waitForSlot();
 
@@ -41,9 +42,21 @@ export class TelegramSendQueue {
       } catch (error) {
         const retryAfterSeconds = telegramRetryAfterSeconds(error);
         if (retryAfterSeconds === null) {
-          throw error;
+          if (!isTransientTelegramSendError(error)) {
+            throw error;
+          }
+
+          transientFailures += 1;
+          const retryAfterMs = Math.min(30_000, 1000 * 2 ** Math.min(transientFailures, 5));
+          this.nextSendAt = Date.now() + retryAfterMs;
+          logger.warn("telegram send transient failure; retrying", {
+            retryAfterSeconds: Math.ceil(retryAfterMs / 1000),
+            error: errorMessage(error),
+          });
+          continue;
         }
 
+        transientFailures = 0;
         const retryAfterMs = (retryAfterSeconds + 1) * 1000;
         this.nextSendAt = Date.now() + retryAfterMs;
         logger.warn("telegram send rate limited; retrying", {
@@ -81,6 +94,29 @@ function telegramRetryAfterSeconds(error: unknown): number | null {
   }
 
   return null;
+}
+
+function isTransientTelegramSendError(error: unknown): boolean {
+  const values = new Set<string>();
+  collectStringFields(error, values);
+  return ["ETIMEDOUT", "ECONNRESET", "ECONNREFUSED", "EAI_AGAIN", "ENOTFOUND", "UND_ERR_CONNECT_TIMEOUT"].some((code) =>
+    values.has(code),
+  );
+}
+
+function collectStringFields(value: unknown, output: Set<string>, seen = new Set<unknown>()): void {
+  if (!value || typeof value !== "object" || seen.has(value)) {
+    return;
+  }
+  seen.add(value);
+
+  for (const item of Object.values(value as Record<string, unknown>)) {
+    if (typeof item === "string") {
+      output.add(item);
+    } else if (item && typeof item === "object") {
+      collectStringFields(item, output, seen);
+    }
+  }
 }
 
 function errorMessage(error: unknown): string {
