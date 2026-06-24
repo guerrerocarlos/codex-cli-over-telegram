@@ -2,7 +2,7 @@ import "dotenv/config";
 import { randomBytes } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import type { ModelProvider, SandboxMode } from "./types.js";
 
 export type CodexBackendKind = "app-server" | "exec";
@@ -74,6 +74,10 @@ function expandHome(input: string): string {
 
 function parseNumberList(name: string): Set<number> {
   const raw = process.env[name]?.trim();
+  return parseNumberListRaw(name, raw ?? "");
+}
+
+function parseNumberListRaw(name: string, raw: string): Set<number> {
   if (!raw) {
     return new Set();
   }
@@ -91,6 +95,26 @@ function parseNumberList(name: string): Set<number> {
     });
 
   return new Set(values);
+}
+
+function parseNumberListFile(pathValue: string, label: string): Set<number> {
+  let raw: string;
+  try {
+    raw = readFileSync(pathValue, "utf8");
+  } catch (error) {
+    const code = (error as { code?: unknown }).code;
+    if (code === "ENOENT") {
+      return new Set();
+    }
+    throw error;
+  }
+
+  const values = raw
+    .split(/\r?\n/)
+    .map((line) => line.replace(/#.*/, "").trim())
+    .filter(Boolean)
+    .join(",");
+  return parseNumberListRaw(label, values);
 }
 
 function parseRepoRoots(): string[] {
@@ -167,12 +191,18 @@ export function loadConfig(): AppConfig {
   const databasePath = path.resolve(optional("DATABASE_PATH", "./data/state.sqlite"));
   const managerRepoPath = path.resolve(expandHome(optional("MANAGER_REPO_PATH", "~/topic-zero")));
   const managerBridgeToken = optional("MANAGER_BRIDGE_TOKEN", randomBytes(32).toString("hex"));
+  const extraTelegramUsersFile = path.resolve(expandHome(optional("ALLOWED_TELEGRAM_USER_IDS_FILE", "./data/allowed-telegram-users.txt")));
   mkdirSync(path.dirname(databasePath), { recursive: true });
   mkdirSync(managerRepoPath, { recursive: true });
 
+  const allowedTelegramUserIds = new Set([
+    ...parseNumberList("ALLOWED_TELEGRAM_USER_IDS"),
+    ...parseNumberListFile(extraTelegramUsersFile, "ALLOWED_TELEGRAM_USER_IDS_FILE"),
+  ]);
+
   return {
     telegramBotToken: required("TELEGRAM_BOT_TOKEN"),
-    allowedTelegramUserIds: parseNumberList("ALLOWED_TELEGRAM_USER_IDS"),
+    allowedTelegramUserIds,
     allowedTelegramChatIds: parseNumberList("ALLOWED_TELEGRAM_CHAT_IDS"),
     allowedRepoRoots: parseRepoRoots(),
     databasePath,

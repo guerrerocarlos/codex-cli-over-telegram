@@ -26,6 +26,7 @@ Paste this:
 ```text
 TELEGRAM_BOT_TOKEN=123456:telegram-token
 ALLOWED_TELEGRAM_USER_IDS=
+ALLOWED_TELEGRAM_USER_IDS_FILE=./data/allowed-telegram-users.txt
 ALLOWED_TELEGRAM_CHAT_IDS=
 ALLOWED_REPO_ROOTS=/home/you
 DATABASE_PATH=./state.sqlite
@@ -229,6 +230,7 @@ Use this shape:
 ```text
 TELEGRAM_BOT_TOKEN=123456:telegram-token
 ALLOWED_TELEGRAM_USER_IDS=12345678
+ALLOWED_TELEGRAM_USER_IDS_FILE=./data/allowed-telegram-users.txt
 ALLOWED_TELEGRAM_CHAT_IDS=-1001234567890
 ALLOWED_REPO_ROOTS=/path/to/allowed/repos
 DATABASE_PATH=/path/to/service-home/.local/state/codex-cli-over-telegram/state.sqlite
@@ -307,6 +309,7 @@ Keep these tight:
 
 ```text
 ALLOWED_TELEGRAM_USER_IDS=
+ALLOWED_TELEGRAM_USER_IDS_FILE=./data/allowed-telegram-users.txt
 ALLOWED_TELEGRAM_CHAT_IDS=
 ALLOWED_REPO_ROOTS=
 ```
