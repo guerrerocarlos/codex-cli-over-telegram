@@ -1,0 +1,21 @@
+[Unit]
+Description=Back up Codex Telegram fleet state
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=gnu
+Group=gnu
+WorkingDirectory=/home/gnu/codex-cli-over-telegram
+Environment=HOME=/home/gnu
+Environment=PATH=/home/gnu/.local/bin:/home/gnu/.grok/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=APP_DIR=/home/gnu/codex-cli-over-telegram
+Environment=MANAGER_REPO=/home/gnu/inglesconliza-manager
+Environment=DATABASE_PATH=/home/gnu/codex-cli-over-telegram/data/state.sqlite
+Environment=PUSH_FLEET_BACKUP=true
+ExecStart=/home/gnu/codex-cli-over-telegram/scripts/backup-fleet-state.sh
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/home/gnu/codex-cli-over-telegram /home/gnu/inglesconliza-manager

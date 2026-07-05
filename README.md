@@ -327,6 +327,17 @@ DATABASE_PATH=~/codex-cli-over-telegram/data/state.sqlite \
 ./scripts/backup-fleet-state.sh
 ```
 
+This repo also includes systemd units for this backup:
+
+```bash
+sudo cp deploy/systemd/codex-cli-over-telegram-fleet-backup.service /etc/systemd/system/
+sudo cp deploy/systemd/codex-cli-over-telegram-fleet-backup.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now codex-cli-over-telegram-fleet-backup.timer
+```
+
+The timer runs daily at `03:17` local time and uses `Persistent=true`, so missed backups run after the machine comes back online.
+
 On another machine, clone the manager repo and use its manifest to clone missing repos and restore known topic bindings:
 
 ```bash
