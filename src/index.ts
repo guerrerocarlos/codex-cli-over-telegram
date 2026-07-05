@@ -38,7 +38,13 @@ async function main(): Promise<void> {
     logger.info("shutting down", { signal });
     cronScheduler.stop();
     healthServer.close();
-    await bot.stop();
+    try {
+      await bot.stop();
+    } catch (error) {
+      logger.warn("telegram bot stop failed during shutdown", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
     storage.close();
     process.exit(0);
   };
