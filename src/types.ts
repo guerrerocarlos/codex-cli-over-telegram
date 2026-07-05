@@ -53,6 +53,23 @@ export interface RunRecord {
   errorMessage: string | null;
 }
 
+export interface CronJobRecord {
+  id: number;
+  chatId: number;
+  bindingId: number;
+  createdByUserId: number | null;
+  cronExpression: string;
+  prompt: string;
+  enabled: boolean;
+  nextRunAt: string;
+  lastRunAt: string | null;
+  lastRunId: number | null;
+  lastError: string | null;
+  runCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface InterruptedRunRecord extends RunRecord {
   interruptedStatus: Extract<RunStatus, "queued" | "running">;
 }

@@ -29,6 +29,7 @@ import {
 import { claudeModelOptions, providerFromAlias, providerLabel, xaiModelOptions } from "./modelProviders.js";
 import { logger } from "./logger.js";
 import { TelegramSendQueue } from "./telegramSendQueue.js";
+import { nextCronRunAfter, validateCronExpression } from "./cron.js";
 import { TelegramRichDraftStreamer } from "./telegramRichStream.js";
 import {
   saveTelegramFileToContext,
@@ -662,6 +663,10 @@ export function createTelegramBot(
     await handleManagerQueueTopicCommand(ctx, config, storage, codex, bot, queue, ctx.match.trim());
   });
 
+  bot.command("cron", async (ctx) => {
+    await handleCronCommand(ctx, config, storage, ctx.match.trim());
+  });
+
   bot.command("status", async (ctx) => {
     const binding = await requireBinding(ctx, config, storage);
     if (!binding) {
@@ -1051,6 +1056,8 @@ export interface QueueManagerTopicRunInput {
   telegramUserId: number | null;
   input: string;
   replyToMessageId: number | null;
+  notify?: boolean;
+  source?: string;
 }
 
 export interface QueueManagerTopicRunResult {
@@ -1090,11 +1097,12 @@ export async function queueManagerTopicRun(input: QueueManagerTopicRunInput): Pr
     telegramUserId,
     chatId: managerTopic.chatId,
     messageThreadId: managerTopic.messageThreadId,
-    eventType: "manager_queue_topic",
-    details: {
-      targetMessageThreadId: binding.messageThreadId,
-      targetTopicName: topicDisplayName(binding),
-      runId: run.id,
+      eventType: "manager_queue_topic",
+      details: {
+        source: input.source ?? "manager",
+        targetMessageThreadId: binding.messageThreadId,
+        targetTopicName: topicDisplayName(binding),
+        runId: run.id,
       queuedBehind,
     },
   });
@@ -1109,7 +1117,7 @@ export async function queueManagerTopicRun(input: QueueManagerTopicRunInput): Pr
       "Prompt:",
       codeBlock(request.prompt),
     ].join("\n"),
-    { notify: true, replyToMessageId: input.replyToMessageId },
+    { notify: input.notify ?? true, replyToMessageId: input.replyToMessageId },
   );
   if (taskMessageId !== null) {
     storage.updateRunTelegramMessageId(run.id, taskMessageId);
@@ -1138,6 +1146,201 @@ export async function queueManagerTopicRun(input: QueueManagerTopicRunInput): Pr
     repoPath: binding.repoPath,
     queuedBehind,
   };
+}
+
+interface CreateCronInput {
+  chatId: number;
+  currentMessageThreadId: number;
+  telegramUserId: number | null;
+  input: string;
+}
+
+interface CreateCronResult {
+  ok: boolean;
+  message: string;
+  cronId?: number;
+  topicId?: number;
+  topicName?: string;
+  repoPath?: string;
+  nextRunAt?: string;
+}
+
+async function handleCronCommand(
+  ctx: Context,
+  config: AppConfig,
+  storage: Storage,
+  input: string,
+): Promise<void> {
+  const topic = getTopicRef(ctx, config);
+  if (!topic) {
+    await reply(ctx, "Use this inside a Telegram forum topic, or enable ALLOW_UNTHREADED_CHATS.", config);
+    return;
+  }
+
+  const trimmed = input.trim();
+  if (!trimmed || /^list$/i.test(trimmed)) {
+    await reply(ctx, cronListText(storage, topic.chatId), config);
+    return;
+  }
+
+  const offMatch = trimmed.match(/^(?:off|disable)\s+#?(\d+)\s*$/i);
+  if (offMatch) {
+    const cronId = Number.parseInt(offMatch[1] ?? "", 10);
+    const changed = storage.setCronJobEnabledForChat(topic.chatId, cronId, false);
+    await reply(ctx, changed ? `Disabled cron #${cronId}.` : `Could not find cron #${cronId}.`, config);
+    return;
+  }
+
+  const result = createCronForTopic(storage, {
+    chatId: topic.chatId,
+    currentMessageThreadId: topic.messageThreadId,
+    telegramUserId: ctx.from?.id ?? null,
+    input: trimmed,
+  });
+  await reply(ctx, result.message, config);
+}
+
+function createCronForTopic(storage: Storage, input: CreateCronInput): CreateCronResult {
+  const parsed = parseCronCommandInput(storage, input.chatId, input.currentMessageThreadId, input.input);
+  if (!parsed.ok) {
+    return { ok: false, message: parsed.message };
+  }
+
+  const nextRunAt = nextCronRunAfter(parsed.cronExpression, new Date()).toISOString();
+  const job = storage.createCronJob({
+    chatId: input.chatId,
+    bindingId: parsed.binding.id,
+    createdByUserId: input.telegramUserId,
+    cronExpression: parsed.cronExpression,
+    prompt: parsed.prompt,
+    nextRunAt,
+  });
+  storage.audit({
+    telegramUserId: input.telegramUserId,
+    chatId: input.chatId,
+    messageThreadId: input.currentMessageThreadId,
+    eventType: "cron_created",
+    details: {
+      cronId: job.id,
+      targetMessageThreadId: parsed.binding.messageThreadId,
+      cronExpression: parsed.cronExpression,
+      nextRunAt,
+    },
+  });
+
+  return {
+    ok: true,
+    message: [
+      `Created cron #${job.id} for ${topicDisplayName(parsed.binding)}.`,
+      `Schedule: ${codeBlock(parsed.cronExpression)}`,
+      `Next run: ${codeBlock(nextRunAt)}`,
+      "Prompt:",
+      codeBlock(parsed.prompt),
+    ].join("\n"),
+    cronId: job.id,
+    topicId: parsed.binding.messageThreadId,
+    topicName: topicDisplayName(parsed.binding),
+    repoPath: parsed.binding.repoPath,
+    nextRunAt,
+  };
+}
+
+type ParsedCronCommand =
+  | { ok: true; binding: TopicBinding; cronExpression: string; prompt: string }
+  | { ok: false; message: string };
+
+function parseCronCommandInput(
+  storage: Storage,
+  chatId: number,
+  currentMessageThreadId: number,
+  input: string,
+): ParsedCronCommand {
+  const tokens = input.trim().split(/\s+/);
+  if (tokens.length < 6) {
+    return {
+      ok: false,
+      message: [
+        "Usage:",
+        codeBlock([
+          "/cron <minute> <hour> <day> <month> <weekday> <prompt>",
+          "/cron <topic-id-or-name> <minute> <hour> <day> <month> <weekday> <prompt>",
+          "/cron list",
+          "/cron off <id>",
+        ].join("\n")),
+      ].join("\n"),
+    };
+  }
+
+  const currentBinding = storage.getBinding(chatId, currentMessageThreadId);
+  const currentTopicCron = parseCronAt(tokens, 0);
+  if (currentTopicCron && currentBinding) {
+    return { ok: true, binding: currentBinding, ...currentTopicCron };
+  }
+
+  const selector = tokens[0] ?? "";
+  const targetCron = parseCronAt(tokens, 1);
+  if (!targetCron) {
+    return { ok: false, message: "Could not parse cron expression. Use 5 fields like `0 * * * *`." };
+  }
+
+  const binding = findManagerTargetBinding(storage, chatId, selector);
+  if (!binding) {
+    return {
+      ok: false,
+      message: [
+        `Could not find managed topic: ${selector}`,
+        "",
+        "Known topics:",
+        codeBlock(managerTopicSelectorList(storage, chatId)),
+      ].join("\n"),
+    };
+  }
+  return { ok: true, binding, ...targetCron };
+}
+
+function parseCronAt(tokens: string[], offset: number): { cronExpression: string; prompt: string } | null {
+  if (tokens.length < offset + 6) {
+    return null;
+  }
+  const expression = tokens.slice(offset, offset + 5).join(" ");
+  let cronExpression: string;
+  try {
+    cronExpression = validateCronExpression(expression);
+  } catch {
+    return null;
+  }
+
+  const prompt = tokens.slice(offset + 5).join(" ").trim();
+  return prompt ? { cronExpression, prompt } : null;
+}
+
+function cronListText(storage: Storage, chatId: number): string {
+  const jobs = storage.listCronJobsForChat(chatId);
+  if (jobs.length === 0) {
+    return "No cron jobs in this chat yet.";
+  }
+
+  return [
+    "Cron jobs:",
+    codeBlock(
+      jobs
+        .map((job) => {
+          const binding = storage.getBindingById(job.bindingId);
+          const target = binding ? `${topicDisplayName(binding)} (#${binding.messageThreadId})` : `removed binding ${job.bindingId}`;
+          return [
+            `#${job.id} ${job.enabled ? "enabled" : "disabled"} ${job.cronExpression}`,
+            `  target: ${target}`,
+            `  next: ${job.nextRunAt}`,
+            `  runs: ${job.runCount}${job.lastRunId ? `, last run #${job.lastRunId}` : ""}`,
+            job.lastError ? `  last error: ${job.lastError}` : null,
+            `  prompt: ${truncateText(job.prompt, 140)}`,
+          ]
+            .filter(Boolean)
+            .join("\n");
+        })
+        .join("\n\n"),
+    ),
+  ].join("\n");
 }
 
 export async function handleTelegramBridgeRequest(input: {
@@ -1169,6 +1372,57 @@ export async function handleTelegramBridgeRequest(input: {
       message: topics.length > 0 ? `Found ${topics.length} bound topic(s).` : "No bound topics found.",
       topics,
     };
+  }
+
+  if (request.action === "list_crons") {
+    const crons = storage.listCronJobsForChat(request.chatId).map((job) => {
+      const binding = storage.getBindingById(job.bindingId);
+      return {
+        cronId: job.id,
+        enabled: job.enabled,
+        cron: job.cronExpression,
+        prompt: job.prompt,
+        nextRunAt: job.nextRunAt,
+        lastRunAt: job.lastRunAt,
+        lastRunId: job.lastRunId,
+        lastError: job.lastError,
+        runCount: job.runCount,
+        topicId: binding?.messageThreadId ?? null,
+        topicName: binding ? topicDisplayName(binding) : null,
+        repoPath: binding?.repoPath ?? null,
+      };
+    });
+    return {
+      ok: true,
+      message: crons.length > 0 ? `Found ${crons.length} cron job(s).` : "No cron jobs found.",
+      crons,
+    };
+  }
+
+  if (request.action === "delete_cron") {
+    if (!request.cronId) {
+      return { ok: false, message: "delete_cron requires cronId." };
+    }
+    const changed = storage.setCronJobEnabledForChat(request.chatId, request.cronId, false);
+    return {
+      ok: changed,
+      message: changed ? `Disabled cron #${request.cronId}.` : `Could not find cron #${request.cronId}.`,
+    };
+  }
+
+  if (request.action === "create_cron") {
+    const selector = request.selector?.trim() ?? "";
+    const cron = request.cron?.trim() ?? "";
+    const prompt = request.prompt?.trim() ?? "";
+    if (!selector || !cron || !prompt) {
+      return { ok: false, message: "create_cron requires topic, cron, and prompt." };
+    }
+    return createCronForTopic(storage, {
+      chatId: request.chatId,
+      currentMessageThreadId: 0,
+      telegramUserId: null,
+      input: `${selector} ${cron} ${prompt}`,
+    });
   }
 
   if (request.action === "read_topic_messages") {
@@ -2636,6 +2890,10 @@ function helpText(): string {
     "/queue <prompt> - queue the next agent turn instead of steering the active run",
     "/queue_topic <topic-id-or-name> <prompt> - queue prompt for a worker topic",
     "/assign <topic-id-or-name> <prompt> - alias for /queue_topic",
+    "/cron <5-field-cron> <prompt> - schedule a recurring prompt for this topic",
+    "/cron <topic-id-or-name> <5-field-cron> <prompt> - schedule another topic",
+    "/cron list - list scheduled prompts in this chat",
+    "/cron off <id> - disable a scheduled prompt",
     "",
     "Any ordinary message in a bound topic is sent to the selected agent if Telegram privacy mode allows it. During an active OpenAI app-server run, ordinary messages steer the current turn. Use /queue to force a follow-up turn, or /ask when privacy mode is enabled.",
   ].join("\n");
@@ -2669,6 +2927,7 @@ export function telegramCommandMenu(): Array<{ command: string; description: str
     { command: "queue", description: "Queue the next agent turn" },
     { command: "queue_topic", description: "Queue a prompt for a worker topic" },
     { command: "assign", description: "Alias for /queue_topic" },
+    { command: "cron", description: "Create or list scheduled prompts" },
   ];
 }
 

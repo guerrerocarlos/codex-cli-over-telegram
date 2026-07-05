@@ -1,5 +1,6 @@
 import Database from "better-sqlite3";
 import type {
+  CronJobRecord,
   InterruptedRunRecord,
   ModelProvider,
   RunRecord,
@@ -78,6 +79,23 @@ interface TopicMessageRow {
   author_name: string | null;
   text: string;
   created_at: string;
+}
+
+interface CronJobRow {
+  id: number;
+  chat_id: number;
+  binding_id: number;
+  created_by_user_id: number | null;
+  cron_expression: string;
+  prompt: string;
+  enabled: number;
+  next_run_at: string;
+  last_run_at: string | null;
+  last_run_id: number | null;
+  last_error: string | null;
+  run_count: number;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface PendingContextFileRecord {
@@ -247,6 +265,25 @@ function mapManagerEvent(row: ManagerEventRow): ManagerEventRecord {
   };
 }
 
+function mapCronJob(row: CronJobRow): CronJobRecord {
+  return {
+    id: row.id,
+    chatId: row.chat_id,
+    bindingId: row.binding_id,
+    createdByUserId: row.created_by_user_id,
+    cronExpression: row.cron_expression,
+    prompt: row.prompt,
+    enabled: row.enabled === 1,
+    nextRunAt: row.next_run_at,
+    lastRunAt: row.last_run_at,
+    lastRunId: row.last_run_id,
+    lastError: row.last_error,
+    runCount: row.run_count,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
 function parseJsonObject(value: string): Record<string, unknown> {
   try {
     const parsed = JSON.parse(value) as unknown;
@@ -362,6 +399,28 @@ export class Storage {
 
       CREATE INDEX IF NOT EXISTS topic_messages_topic_idx
         ON topic_messages (chat_id, message_thread_id, id);
+
+      CREATE TABLE IF NOT EXISTS cron_jobs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        chat_id INTEGER NOT NULL,
+        binding_id INTEGER NOT NULL REFERENCES topic_bindings(id) ON DELETE CASCADE,
+        created_by_user_id INTEGER,
+        cron_expression TEXT NOT NULL,
+        prompt TEXT NOT NULL,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        next_run_at TEXT NOT NULL,
+        last_run_at TEXT,
+        last_run_id INTEGER REFERENCES runs(id) ON DELETE SET NULL,
+        last_error TEXT,
+        run_count INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS cron_jobs_due_idx
+        ON cron_jobs (enabled, next_run_at);
+      CREATE INDEX IF NOT EXISTS cron_jobs_chat_idx
+        ON cron_jobs (chat_id, id);
     `);
 
     this.addColumnIfMissing("topic_bindings", "model", "TEXT");
@@ -370,6 +429,107 @@ export class Storage {
     this.addColumnIfMissing("topic_bindings", "plan_mode", "INTEGER NOT NULL DEFAULT 0");
     this.addColumnIfMissing("topic_bindings", "token_usage_json", "TEXT");
     this.addColumnIfMissing("runs", "plan_mode", "INTEGER NOT NULL DEFAULT 0");
+  }
+
+  createCronJob(input: {
+    chatId: number;
+    bindingId: number;
+    createdByUserId: number | null;
+    cronExpression: string;
+    prompt: string;
+    nextRunAt: string;
+  }): CronJobRecord {
+    const timestamp = now();
+    const result = this.db
+      .prepare(
+        `
+        INSERT INTO cron_jobs (
+          chat_id, binding_id, created_by_user_id, cron_expression, prompt,
+          enabled, next_run_at, created_at, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)
+      `,
+      )
+      .run(
+        input.chatId,
+        input.bindingId,
+        input.createdByUserId,
+        input.cronExpression,
+        input.prompt,
+        input.nextRunAt,
+        timestamp,
+        timestamp,
+      );
+    const job = this.getCronJob(Number(result.lastInsertRowid));
+    if (!job) {
+      throw new Error("Failed to load cron job after insert");
+    }
+    return job;
+  }
+
+  getCronJob(cronJobId: number): CronJobRecord | null {
+    const row = this.db.prepare("SELECT * FROM cron_jobs WHERE id = ?").get(cronJobId) as
+      | CronJobRow
+      | undefined;
+    return row ? mapCronJob(row) : null;
+  }
+
+  listCronJobsForChat(chatId: number): CronJobRecord[] {
+    const rows = this.db
+      .prepare("SELECT * FROM cron_jobs WHERE chat_id = ? ORDER BY enabled DESC, next_run_at ASC, id ASC")
+      .all(chatId) as CronJobRow[];
+    return rows.map(mapCronJob);
+  }
+
+  listDueCronJobs(nowIso: string, limit: number): CronJobRecord[] {
+    const rows = this.db
+      .prepare(
+        `
+        SELECT * FROM cron_jobs
+        WHERE enabled = 1 AND next_run_at <= ?
+        ORDER BY next_run_at ASC, id ASC
+        LIMIT ?
+      `,
+      )
+      .all(nowIso, limit) as CronJobRow[];
+    return rows.map(mapCronJob);
+  }
+
+  updateCronJobAfterRun(cronJobId: number, input: { runId: number; nextRunAt: string }): void {
+    this.db
+      .prepare(
+        `
+        UPDATE cron_jobs
+        SET last_run_at = ?,
+            last_run_id = ?,
+            last_error = NULL,
+            run_count = run_count + 1,
+            next_run_at = ?,
+            updated_at = ?
+        WHERE id = ?
+      `,
+      )
+      .run(now(), input.runId, input.nextRunAt, now(), cronJobId);
+  }
+
+  updateCronJobError(cronJobId: number, error: string, nextRunAt: string): void {
+    this.db
+      .prepare("UPDATE cron_jobs SET last_error = ?, next_run_at = ?, updated_at = ? WHERE id = ?")
+      .run(error, nextRunAt, now(), cronJobId);
+  }
+
+  setCronJobEnabled(cronJobId: number, enabled: boolean): boolean {
+    const result = this.db
+      .prepare("UPDATE cron_jobs SET enabled = ?, updated_at = ? WHERE id = ?")
+      .run(enabled ? 1 : 0, now(), cronJobId);
+    return result.changes > 0;
+  }
+
+  setCronJobEnabledForChat(chatId: number, cronJobId: number, enabled: boolean): boolean {
+    const result = this.db
+      .prepare("UPDATE cron_jobs SET enabled = ?, updated_at = ? WHERE chat_id = ? AND id = ?")
+      .run(enabled ? 1 : 0, now(), chatId, cronJobId);
+    return result.changes > 0;
   }
 
   prepareInterruptedRunsForResume(): InterruptedRunRecord[] {

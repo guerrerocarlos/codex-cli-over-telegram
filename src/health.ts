@@ -2,13 +2,15 @@ import http from "node:http";
 import type { AppConfig } from "./config.js";
 import { logger } from "./logger.js";
 
-export type BridgeAction = "queue_topic" | "list_topics" | "read_topic_messages" | "create_topic";
+export type BridgeAction = "queue_topic" | "list_topics" | "read_topic_messages" | "create_topic" | "create_cron" | "list_crons" | "delete_cron";
 
 export interface BridgeRequest {
   action: BridgeAction;
   chatId: number;
   selector?: string;
   prompt?: string;
+  cron?: string;
+  cronId?: number;
   limit?: number;
 }
 
@@ -22,6 +24,9 @@ export interface BridgeResult {
   queuedBehind?: number;
   topics?: unknown[];
   messages?: unknown[];
+  crons?: unknown[];
+  cronId?: number;
+  nextRunAt?: string;
 }
 
 export type BridgeHandler = (request: BridgeRequest) => Promise<BridgeResult>;
@@ -137,7 +142,15 @@ function normalizeBridgeRequest(url: string, value: unknown): BridgeRequest | nu
   }
 
   const action = record.action;
-  if (action !== "queue_topic" && action !== "list_topics" && action !== "read_topic_messages" && action !== "create_topic") {
+  if (
+    action !== "queue_topic" &&
+    action !== "list_topics" &&
+    action !== "read_topic_messages" &&
+    action !== "create_topic" &&
+    action !== "create_cron" &&
+    action !== "list_crons" &&
+    action !== "delete_cron"
+  ) {
     return null;
   }
 
@@ -150,6 +163,12 @@ function normalizeBridgeRequest(url: string, value: unknown): BridgeRequest | nu
   }
   if (typeof record.prompt === "string") {
     bridgeRequest.prompt = record.prompt;
+  }
+  if (typeof record.cron === "string") {
+    bridgeRequest.cron = record.cron;
+  }
+  if (typeof record.cronId === "number" && Number.isSafeInteger(record.cronId)) {
+    bridgeRequest.cronId = record.cronId;
   }
   if (typeof record.limit === "number" && Number.isFinite(record.limit)) {
     bridgeRequest.limit = record.limit;

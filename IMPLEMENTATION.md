@@ -201,6 +201,29 @@ CREATE TABLE audit_events (
 );
 ```
 
+### `cron_jobs`
+
+```sql
+CREATE TABLE cron_jobs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  chat_id INTEGER NOT NULL,
+  binding_id INTEGER NOT NULL REFERENCES topic_bindings(id) ON DELETE CASCADE,
+  created_by_user_id INTEGER,
+  cron_expression TEXT NOT NULL,
+  prompt TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  next_run_at TEXT NOT NULL,
+  last_run_at TEXT,
+  last_run_id INTEGER REFERENCES runs(id) ON DELETE SET NULL,
+  last_error TEXT,
+  run_count INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+```
+
+The service owns cron scheduling inside the long-running bot process. Every minute it loads due enabled jobs, queues a normal run in the target topic, records the run id, and advances `next_run_at`. This keeps scheduled work visible in Telegram and lets the existing per-topic queue and repo locks control execution.
+
 ## Bot Commands
 
 ### Required MVP Commands
@@ -253,6 +276,25 @@ Set sandbox mode for future prompts in this topic:
 ```
 
 Show whether the topic has a queued or running Codex turn and the latest reported thread context usage.
+
+```text
+/cron <minute> <hour> <day> <month> <weekday> <prompt>
+```
+
+Attach a recurring prompt to the current bound topic using standard five-field cron syntax.
+
+```text
+/cron <topic-id-or-name> <minute> <hour> <day> <month> <weekday> <prompt>
+```
+
+Attach a recurring prompt to another bound topic. This is useful from a manager topic.
+
+```text
+/cron list
+/cron off <id>
+```
+
+List cron jobs in the chat or disable one. The app-server bridge exposes matching `create_cron`, `list_crons`, and `delete_cron` tools so an agent can schedule its own continuation or verification loop.
 
 ```text
 /stop

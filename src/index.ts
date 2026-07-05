@@ -9,6 +9,7 @@ import { RunQueue } from "./runQueue.js";
 import { createTelegramBot, handleTelegramBridgeRequest, telegramCommandMenu } from "./telegram.js";
 import { startHealthServer } from "./health.js";
 import { logger } from "./logger.js";
+import { CronScheduler } from "./cronScheduler.js";
 
 async function main(): Promise<void> {
   const config = loadConfig();
@@ -31,9 +32,11 @@ async function main(): Promise<void> {
     }),
   );
   const bot = createTelegramBot(config, storage, codex, { recoverRuns: interruptedRuns, queue });
+  const cronScheduler = new CronScheduler({ storage, bot, config, codex, queue });
 
   const shutdown = async (signal: string) => {
     logger.info("shutting down", { signal });
+    cronScheduler.stop();
     healthServer.close();
     await bot.stop();
     storage.close();
@@ -60,6 +63,7 @@ async function main(): Promise<void> {
     defaultSandboxMode: config.defaultSandboxMode,
     alwaysYoloMode: config.alwaysYoloMode,
   });
+  cronScheduler.start();
   await bot.start({
     drop_pending_updates: true,
     onStart: (info) => {

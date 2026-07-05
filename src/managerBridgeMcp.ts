@@ -16,6 +16,8 @@ interface JsonRpcRequest {
 interface ToolCallArguments {
   topic?: unknown;
   prompt?: unknown;
+  cron?: unknown;
+  cronId?: unknown;
   limit?: unknown;
 }
 
@@ -134,6 +136,54 @@ async function handleLine(line: string): Promise<void> {
                 additionalProperties: false,
               },
             },
+            {
+              name: "create_cron",
+              description:
+                "Create a scheduled cron prompt for a bound Telegram topic. Use this when you need to wake yourself or another topic on a recurring schedule.",
+              inputSchema: {
+                type: "object",
+                properties: {
+                  topic: {
+                    type: "string",
+                    description: "Topic id, topic name, or repo folder name.",
+                  },
+                  cron: {
+                    type: "string",
+                    description: "Five-field cron expression, for example: 0 * * * *",
+                  },
+                  prompt: {
+                    type: "string",
+                    description: "The prompt to queue each time the cron fires.",
+                  },
+                },
+                required: ["topic", "cron", "prompt"],
+                additionalProperties: false,
+              },
+            },
+            {
+              name: "list_crons",
+              description: "List cron jobs configured for this Telegram chat.",
+              inputSchema: {
+                type: "object",
+                properties: {},
+                additionalProperties: false,
+              },
+            },
+            {
+              name: "delete_cron",
+              description: "Disable a Telegram cron job by id.",
+              inputSchema: {
+                type: "object",
+                properties: {
+                  cronId: {
+                    type: "number",
+                    description: "Cron job id to disable.",
+                  },
+                },
+                required: ["cronId"],
+                additionalProperties: false,
+              },
+            },
           ],
         });
         return;
@@ -151,7 +201,15 @@ async function handleLine(line: string): Promise<void> {
 
 async function callTool(params: any): Promise<unknown> {
   const toolName = params?.name;
-  if (toolName !== "queue_topic" && toolName !== "list_topics" && toolName !== "read_topic_messages" && toolName !== "create_topic") {
+  if (
+    toolName !== "queue_topic" &&
+    toolName !== "list_topics" &&
+    toolName !== "read_topic_messages" &&
+    toolName !== "create_topic" &&
+    toolName !== "create_cron" &&
+    toolName !== "list_crons" &&
+    toolName !== "delete_cron"
+  ) {
     throw new Error(`Unknown tool: ${params?.name ?? "missing"}`);
   }
 
@@ -185,6 +243,26 @@ async function callTool(params: any): Promise<unknown> {
     if (toolName === "read_topic_messages" && typeof args.limit === "number" && Number.isFinite(args.limit)) {
       body.limit = args.limit;
     }
+  }
+
+  if (toolName === "create_cron") {
+    const topic = typeof args.topic === "string" ? args.topic.trim() : "";
+    const cron = typeof args.cron === "string" ? args.cron.trim() : "";
+    const prompt = typeof args.prompt === "string" ? args.prompt.trim() : "";
+    if (!topic || !cron || !prompt) {
+      throw new Error("create_cron requires non-empty topic, cron, and prompt arguments.");
+    }
+    body.selector = topic;
+    body.cron = cron;
+    body.prompt = prompt;
+  }
+
+  if (toolName === "delete_cron") {
+    const cronId = typeof args.cronId === "number" && Number.isSafeInteger(args.cronId) ? args.cronId : null;
+    if (cronId === null) {
+      throw new Error("delete_cron requires a numeric cronId argument.");
+    }
+    body.cronId = cronId;
   }
 
   const response = await fetch(bridgeConfig.url, {
