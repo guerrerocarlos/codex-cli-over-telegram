@@ -307,6 +307,37 @@ Codex CLI over Telegram exposes:
 curl -fsS http://127.0.0.1:8787/health
 ```
 
+## Fleet Portability
+
+The live SQLite database remains the runtime source of truth for topic bindings, Codex thread ids, cron jobs, and recent runs. For portability, export a sanitized snapshot into a manager repository:
+
+```bash
+npm run build
+npm run fleet:export -- \
+  --manifest ~/inglesconliza-manager/fleet.json \
+  --database ~/codex-cli-over-telegram/data/state.sqlite \
+  --out ~/inglesconliza-manager/snapshots/telegram-state/latest.json
+```
+
+For a daily backup that commits and pushes the manager repo:
+
+```bash
+MANAGER_REPO=~/inglesconliza-manager \
+DATABASE_PATH=~/codex-cli-over-telegram/data/state.sqlite \
+./scripts/backup-fleet-state.sh
+```
+
+On another machine, clone the manager repo and use its manifest to clone missing repos and restore known topic bindings:
+
+```bash
+npm run fleet:restore -- \
+  --manifest ~/inglesconliza-manager/fleet.json \
+  --database ~/codex-cli-over-telegram/data/state.sqlite \
+  --clone
+```
+
+Add `--create-topics` when the target Telegram group needs new forum topics and `TELEGRAM_BOT_TOKEN` is available. Existing `codexThreadId` values are exported as soft state only; the durable recovery path is repo-owned context such as `AGENTS.md` and `docs/agent/STATE.md`.
+
 ## Security
 
 Telegram access to Codex CLI over Telegram is remote control of your allowed folders.
