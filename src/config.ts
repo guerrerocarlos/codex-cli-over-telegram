@@ -11,6 +11,9 @@ export interface AppConfig {
   telegramBotToken: string;
   allowedTelegramUserIds: Set<number>;
   allowedTelegramChatIds: Set<number>;
+  allowedTelegramChatIdsFile: string;
+  approvalTelegramChatId: number | null;
+  approvalTelegramMessageThreadId: number;
   allowedRepoRoots: string[];
   databasePath: string;
   codexBin: string;
@@ -117,6 +120,18 @@ function parseNumberListFile(pathValue: string, label: string): Set<number> {
   return parseNumberListRaw(label, values);
 }
 
+function optionalInteger(name: string): number | null {
+  const raw = process.env[name]?.trim();
+  if (!raw) {
+    return null;
+  }
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value)) {
+    throw new Error(`${name} must be an integer`);
+  }
+  return value;
+}
+
 function parseRepoRoots(): string[] {
   const raw = required("ALLOWED_REPO_ROOTS");
   const roots = raw
@@ -192,6 +207,7 @@ export function loadConfig(): AppConfig {
   const managerRepoPath = path.resolve(expandHome(optional("MANAGER_REPO_PATH", "~/topic-zero")));
   const managerBridgeToken = optional("MANAGER_BRIDGE_TOKEN", randomBytes(32).toString("hex"));
   const extraTelegramUsersFile = path.resolve(expandHome(optional("ALLOWED_TELEGRAM_USER_IDS_FILE", "./data/allowed-telegram-users.txt")));
+  const extraTelegramChatsFile = path.resolve(expandHome(optional("ALLOWED_TELEGRAM_CHAT_IDS_FILE", "./data/allowed-telegram-chats.txt")));
   mkdirSync(path.dirname(databasePath), { recursive: true });
   mkdirSync(managerRepoPath, { recursive: true });
 
@@ -199,11 +215,19 @@ export function loadConfig(): AppConfig {
     ...parseNumberList("ALLOWED_TELEGRAM_USER_IDS"),
     ...parseNumberListFile(extraTelegramUsersFile, "ALLOWED_TELEGRAM_USER_IDS_FILE"),
   ]);
+  const allowedTelegramChatIds = new Set([
+    ...parseNumberList("ALLOWED_TELEGRAM_CHAT_IDS"),
+    ...parseNumberListFile(extraTelegramChatsFile, "ALLOWED_TELEGRAM_CHAT_IDS_FILE"),
+  ]);
+  const approvalTelegramChatId = optionalInteger("TELEGRAM_APPROVAL_CHAT_ID") ?? [...allowedTelegramChatIds][0] ?? null;
 
   return {
     telegramBotToken: required("TELEGRAM_BOT_TOKEN"),
     allowedTelegramUserIds,
-    allowedTelegramChatIds: parseNumberList("ALLOWED_TELEGRAM_CHAT_IDS"),
+    allowedTelegramChatIds,
+    allowedTelegramChatIdsFile: extraTelegramChatsFile,
+    approvalTelegramChatId,
+    approvalTelegramMessageThreadId: optionalInteger("TELEGRAM_APPROVAL_MESSAGE_THREAD_ID") ?? 0,
     allowedRepoRoots: parseRepoRoots(),
     databasePath,
     codexBin: optional("CODEX_BIN", "codex"),

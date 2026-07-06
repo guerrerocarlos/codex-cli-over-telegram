@@ -28,6 +28,9 @@ TELEGRAM_BOT_TOKEN=123456:telegram-token
 ALLOWED_TELEGRAM_USER_IDS=
 ALLOWED_TELEGRAM_USER_IDS_FILE=./data/allowed-telegram-users.txt
 ALLOWED_TELEGRAM_CHAT_IDS=
+ALLOWED_TELEGRAM_CHAT_IDS_FILE=./data/allowed-telegram-chats.txt
+TELEGRAM_APPROVAL_CHAT_ID=
+TELEGRAM_APPROVAL_MESSAGE_THREAD_ID=0
 ALLOWED_REPO_ROOTS=/home/you
 DATABASE_PATH=./state.sqlite
 CODEX_BACKEND=app-server
@@ -77,6 +80,8 @@ npx github:guerrerocarlos/codex-cli-over-telegram
 ```
 
 Send any message to the bot. If `ALLOWED_TELEGRAM_USER_IDS` or `ALLOWED_TELEGRAM_CHAT_IDS` is blank, Codex CLI over Telegram replies with the exact IDs to put in `.env`.
+
+If an authorized user talks to the bot from a new, unauthorized group, the bot sends an approval request with an inline button to `TELEGRAM_APPROVAL_CHAT_ID`. When `TELEGRAM_APPROVAL_CHAT_ID` is blank, the first allowed chat is used, with `TELEGRAM_APPROVAL_MESSAGE_THREAD_ID=0` targeting the main topic. Approved chats are appended to `ALLOWED_TELEGRAM_CHAT_IDS_FILE` and become active immediately without editing the systemd env file.
 
 Update `.env`, restart the command, then bind a folder:
 
@@ -244,6 +249,9 @@ TELEGRAM_BOT_TOKEN=123456:telegram-token
 ALLOWED_TELEGRAM_USER_IDS=12345678
 ALLOWED_TELEGRAM_USER_IDS_FILE=./data/allowed-telegram-users.txt
 ALLOWED_TELEGRAM_CHAT_IDS=-1001234567890
+ALLOWED_TELEGRAM_CHAT_IDS_FILE=./data/allowed-telegram-chats.txt
+TELEGRAM_APPROVAL_CHAT_ID=
+TELEGRAM_APPROVAL_MESSAGE_THREAD_ID=0
 ALLOWED_REPO_ROOTS=/path/to/allowed/repos
 DATABASE_PATH=/path/to/service-home/.local/state/codex-cli-over-telegram/state.sqlite
 CODEX_BIN=codex
@@ -365,6 +373,9 @@ Keep these tight:
 ALLOWED_TELEGRAM_USER_IDS=
 ALLOWED_TELEGRAM_USER_IDS_FILE=./data/allowed-telegram-users.txt
 ALLOWED_TELEGRAM_CHAT_IDS=
+ALLOWED_TELEGRAM_CHAT_IDS_FILE=./data/allowed-telegram-chats.txt
+TELEGRAM_APPROVAL_CHAT_ID=
+TELEGRAM_APPROVAL_MESSAGE_THREAD_ID=0
 ALLOWED_REPO_ROOTS=
 ```
 

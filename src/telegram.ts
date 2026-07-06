@@ -1,3 +1,4 @@
+import { appendFileSync, mkdirSync } from "node:fs";
 import { mkdir, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -148,14 +149,13 @@ export function createTelegramBot(
         eventType: "unauthorized_chat",
         details: { username: ctx.from?.username ?? null },
       });
+      await sendChatApprovalRequest(bot, config, storage, ctx, sendQueue);
       await reply(
         ctx,
         [
           "This chat is not authorized.",
           "",
-          "Add this value to .env, then restart the bot:",
-          "",
-          codeBlock(`ALLOWED_TELEGRAM_CHAT_IDS=${chatId}`),
+          "An approval request was sent to the main bot management topic.",
         ].join("\n"),
         config,
         sendQueue,
@@ -503,6 +503,39 @@ export function createTelegramBot(
       await ctx.answerCallbackQuery({ text: "Could not set model.", show_alert: true });
       await reply(ctx, `Could not set model:\n${codeBlock(errorMessage(error))}`, config);
     }
+  });
+
+  bot.callbackQuery(/^chatapprove:-?\d+$/, async (ctx) => {
+    const fromId = ctx.from?.id;
+    if (!fromId || !config.allowedTelegramUserIds.has(fromId)) {
+      await ctx.answerCallbackQuery({ text: "Not authorized.", show_alert: true });
+      return;
+    }
+
+    const chatId = Number(ctx.callbackQuery.data.slice("chatapprove:".length));
+    if (!Number.isSafeInteger(chatId)) {
+      await ctx.answerCallbackQuery({ text: "Invalid chat id.", show_alert: true });
+      return;
+    }
+
+    const alreadyAllowed = config.allowedTelegramChatIds.has(chatId);
+    persistAllowedTelegramChat(config, chatId);
+    storage.audit({
+      telegramUserId: fromId,
+      chatId,
+      messageThreadId: null,
+      eventType: "chat_approved",
+      details: { approvedBy: fromId, alreadyAllowed },
+    });
+    await ctx.answerCallbackQuery({ text: alreadyAllowed ? "Chat was already approved." : "Chat approved." });
+    await reply(
+      ctx,
+      [
+        alreadyAllowed ? "Chat was already approved:" : "Approved Telegram chat:",
+        codeBlock(String(chatId)),
+      ].join("\n"),
+      config,
+    );
   });
 
   bot.command("plan", async (ctx) => {
@@ -1917,6 +1950,87 @@ function managerTopicSelectorList(storage: Storage, chatId: number): string {
         `#${binding.messageThreadId}: ${topicDisplayName(binding)} (${path.basename(binding.repoPath)})`,
     )
     .join("\n");
+}
+
+async function sendChatApprovalRequest(
+  bot: Bot,
+  config: AppConfig,
+  storage: Storage,
+  ctx: Context,
+  sendQueue: TelegramSendQueue,
+): Promise<void> {
+  const chatId = ctx.chat?.id;
+  if (!chatId || !config.approvalTelegramChatId) {
+    return;
+  }
+
+  const from = ctx.from;
+  const title = "title" in (ctx.chat ?? {}) ? String(ctx.chat.title ?? "") : "";
+  const text = [
+    "Telegram chat approval requested.",
+    "",
+    `Chat:\n${codeBlock(title ? `${title} (${chatId})` : String(chatId))}`,
+    `Requested by:\n${codeBlock(formatTelegramUser(from))}`,
+    "",
+    "Approve this chat so authorized users can use the bot there.",
+  ].join("\n");
+
+  const keyboard = new InlineKeyboard().text("Approve chat", `chatapprove:${chatId}`);
+  const chunks = markdownV2Chunks(text, config.maxTelegramMessageChars);
+  const [first, ...rest] = chunks;
+  if (!first) {
+    return;
+  }
+
+  await sendQueue.sendMessage(bot.api, config.approvalTelegramChatId, first, {
+    ...(config.approvalTelegramMessageThreadId > 0 ? { message_thread_id: config.approvalTelegramMessageThreadId } : {}),
+    link_preview_options: { is_disabled: true },
+    parse_mode: "MarkdownV2",
+    disable_notification: false,
+    reply_markup: keyboard,
+  });
+
+  for (const chunk of rest) {
+    await sendQueue.sendMessage(bot.api, config.approvalTelegramChatId, chunk, {
+      ...(config.approvalTelegramMessageThreadId > 0 ? { message_thread_id: config.approvalTelegramMessageThreadId } : {}),
+      link_preview_options: { is_disabled: true },
+      parse_mode: "MarkdownV2",
+      disable_notification: true,
+    });
+  }
+
+  storage.audit({
+    telegramUserId: from?.id ?? null,
+    chatId,
+    messageThreadId: ctx.message?.message_thread_id ?? null,
+    eventType: "chat_approval_requested",
+    details: {
+      username: from?.username ?? null,
+      approvalChatId: config.approvalTelegramChatId,
+      approvalMessageThreadId: config.approvalTelegramMessageThreadId,
+    },
+  });
+}
+
+function persistAllowedTelegramChat(config: AppConfig, chatId: number): void {
+  if (config.allowedTelegramChatIds.has(chatId)) {
+    return;
+  }
+  mkdirSync(path.dirname(config.allowedTelegramChatIdsFile), { recursive: true });
+  appendFileSync(config.allowedTelegramChatIdsFile, `${chatId}\n`, "utf8");
+  config.allowedTelegramChatIds.add(chatId);
+}
+
+function formatTelegramUser(user: Context["from"]): string {
+  if (!user) {
+    return "unknown";
+  }
+  const parts = [
+    user.username ? `@${user.username}` : null,
+    [user.first_name, user.last_name].filter(Boolean).join(" ") || null,
+    String(user.id),
+  ].filter(Boolean);
+  return parts.join(" / ");
 }
 
 async function setTopicPlanMode(
