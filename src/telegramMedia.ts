@@ -45,7 +45,11 @@ export async function saveTelegramFileToContext(
     throw new Error("Telegram did not return a downloadable file path.");
   }
 
-  const response = await fetch(`https://api.telegram.org/file/bot${config.telegramBotToken}/${file.file_path}`);
+  const response = await fetchWithRetry(
+    `https://api.telegram.org/file/bot${config.telegramBotToken}/${file.file_path}`,
+    {},
+    "Telegram file download",
+  );
   if (!response.ok) {
     throw new Error(`Telegram file download failed with HTTP ${response.status}.`);
   }
@@ -105,13 +109,17 @@ export async function transcribeStoredAudio(config: AppConfig, storedFile: Store
     path.basename(transcriptionFilePath),
   );
 
-  const response = await fetch("https://api.openai.com/v1/audio/transcriptions", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${config.openaiApiKey}`,
+  const response = await fetchWithRetry(
+    "https://api.openai.com/v1/audio/transcriptions",
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${config.openaiApiKey}`,
+      },
+      body: form,
     },
-    body: form,
-  });
+    "OpenAI transcription request",
+  );
   const body = await response.text();
   if (!response.ok) {
     throw new Error(`OpenAI transcription failed with HTTP ${response.status}: ${truncateErrorBody(body)}`);
@@ -325,6 +333,77 @@ function truncateErrorBody(body: string): string {
     return trimmed;
   }
   return `${trimmed.slice(0, 800).trimEnd()}...`;
+}
+
+async function fetchWithRetry(url: string, init: RequestInit, label: string): Promise<Response> {
+  let lastError: unknown = null;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      const response = await fetch(url, {
+        ...init,
+        signal: AbortSignal.timeout(60_000),
+      });
+      if (!isRetryableHttpStatus(response.status) || attempt === 3) {
+        return response;
+      }
+      await response.arrayBuffer().catch(() => undefined);
+      lastError = new Error(`${label} returned retryable HTTP ${response.status}`);
+    } catch (error) {
+      lastError = error;
+      if (attempt === 3 || !isRetryableFetchError(error)) {
+        throw new Error(`${label} failed: ${formatFetchError(error)}`);
+      }
+    }
+    await sleep(500 * attempt);
+  }
+
+  throw new Error(`${label} failed: ${formatFetchError(lastError)}`);
+}
+
+function isRetryableHttpStatus(status: number): boolean {
+  return status === 408 || status === 429 || (status >= 500 && status <= 599);
+}
+
+function isRetryableFetchError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  const cause = (error as { cause?: unknown }).cause;
+  const code = typeof cause === "object" && cause && "code" in cause ? String((cause as { code?: unknown }).code) : "";
+  return (
+    error.name === "TimeoutError" ||
+    error.name === "AbortError" ||
+    code === "ECONNRESET" ||
+    code === "ETIMEDOUT" ||
+    code === "EAI_AGAIN" ||
+    code === "ENETUNREACH" ||
+    code === "ECONNREFUSED"
+  );
+}
+
+function formatFetchError(error: unknown): string {
+  if (!(error instanceof Error)) {
+    return String(error);
+  }
+  const cause = (error as { cause?: unknown }).cause;
+  const details: string[] = [error.message];
+  if (typeof cause === "object" && cause) {
+    const record = cause as Record<string, unknown>;
+    if (record.code) {
+      details.push(`code=${String(record.code)}`);
+    }
+    if (record.hostname) {
+      details.push(`host=${String(record.hostname)}`);
+    }
+    if (record.address) {
+      details.push(`address=${String(record.address)}`);
+    }
+  }
+  return details.join(" ");
+}
+
+async function sleep(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function isNodeError(error: unknown): error is NodeJS.ErrnoException {
