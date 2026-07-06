@@ -86,7 +86,6 @@ interface HandlePromptOptions {
 }
 
 interface CreateTelegramBotOptions {
-  recoverRuns?: InterruptedRunRecord[];
   queue?: RunQueue;
 }
 
@@ -907,12 +906,6 @@ export function createTelegramBot(
   bot.catch((error) => {
     logger.error("telegram bot error", { error: String(error.error) });
   });
-
-  if (options.recoverRuns?.length) {
-    queueMicrotask(() => {
-      void resumeInterruptedRuns(bot, config, storage, codex, queue, options.recoverRuns ?? []);
-    });
-  }
 
   return bot;
 }
@@ -2134,7 +2127,7 @@ async function handlePrompt(
   });
 }
 
-async function resumeInterruptedRuns(
+export async function resumeInterruptedRuns(
   bot: Bot,
   config: AppConfig,
   storage: Storage,

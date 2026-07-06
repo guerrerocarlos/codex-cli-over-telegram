@@ -6,7 +6,7 @@ import { CodexExecBackend } from "./codexExec.js";
 import { ClaudeAcpBackend, GrokAcpBackend } from "./grokAcp.js";
 import { ProviderRouterBackend } from "./providerRouter.js";
 import { RunQueue } from "./runQueue.js";
-import { createTelegramBot, handleTelegramBridgeRequest, telegramCommandMenu } from "./telegram.js";
+import { createTelegramBot, handleTelegramBridgeRequest, resumeInterruptedRuns, telegramCommandMenu } from "./telegram.js";
 import { startHealthServer } from "./health.js";
 import { logger } from "./logger.js";
 import { CronScheduler } from "./cronScheduler.js";
@@ -31,7 +31,7 @@ async function main(): Promise<void> {
       request,
     }),
   );
-  const bot = createTelegramBot(config, storage, codex, { recoverRuns: interruptedRuns, queue });
+  const bot = createTelegramBot(config, storage, codex, { queue });
   const cronScheduler = new CronScheduler({ storage, bot, config, codex, queue });
 
   const shutdown = async (signal: string) => {
@@ -74,6 +74,9 @@ async function main(): Promise<void> {
     drop_pending_updates: true,
     onStart: (info) => {
       logger.info("telegram bot started", { botUsername: info.username });
+      queueMicrotask(() => {
+        void resumeInterruptedRuns(bot, config, storage, codex, queue, interruptedRuns);
+      });
     },
   });
 }
