@@ -119,6 +119,10 @@ Useful commands:
 /dashboard
 /topics
 /todo
+/work
+/work_add prepare launch checklist
+/work_done 7 verified in production
+/work_blocked 8 waiting on credentials
 /diff
 /commit Commit message
 /push
@@ -134,9 +138,11 @@ Normal messages in a bound chat/topic are sent to Codex. During an active app-se
 
 Use `/create <folder>` to create a new folder inside `ALLOWED_REPO_ROOTS`, create a Telegram forum topic, and bind that new topic to the folder. If the folder already exists, the bot still creates and binds the topic and reports that it reused the existing folder. Relative paths are created under the first allowed root; `~/...` and absolute paths are accepted when they stay inside an allowed root. The bot must be allowed to manage forum topics, and `ALLOW_UNTHREADED_CHATS=true` is required when Telegram sends the general topic without a `message_thread_id`.
 
-Every bound topic behaves the same way, including the general topic when unthreaded chats are enabled and bound. Use `/dashboard` to see topic activity across the chat, `/topics` to list bound topics, and `/todo` to show running, queued, and failed runs. Use `/cron` to attach recurring prompts to a topic with standard five-field cron syntax. In a bound topic, `/cron 0 * * * * <prompt>` schedules that topic; from a manager topic, `/cron <topic-id-or-name> 0 * * * * <prompt>` schedules another bound topic. Use `/cron list` to inspect schedules and `/cron off <id>` to disable one.
+Every bound topic behaves the same way, including the general topic when unthreaded chats are enabled and bound. Use `/dashboard` to see topic activity across the chat, `/topics` to list bound topics, and `/todo` to show explicit work items plus running, queued, and failed runs. Use `/work_add <title>` inside a bound topic to create a persistent work item, or `/work_add <topic-id-or-name> <title>` from a manager topic. Use `/work`, `/work all`, `/work_done <id> <evidence>`, `/work_blocked <id> <reason>`, and `/work_cancel <id> <reason>` to supervise that queue.
 
-In app-server mode, Codex runs get a local `telegram_manager` MCP bridge with tools to list topics, queue prompts into topics, create bound topics, create/list/disable cron jobs, and read recently stored topic messages. Telegram does not expose arbitrary old topic history to bots, so message history tools can only return messages observed after this bot-side storage was enabled.
+Use `/cron` to attach recurring prompts to a topic with standard five-field cron syntax. In a bound topic, `/cron 0 * * * * <prompt>` schedules that topic; from a manager topic, `/cron <topic-id-or-name> 0 * * * * <prompt>` schedules another bound topic. Use `/cron list` to inspect schedules and `/cron off <id>` to disable one.
+
+In app-server mode, Codex runs get a local `telegram_manager` MCP bridge with tools to list topics, queue prompts into topics, create bound topics, create/list/disable cron jobs, create/list/update/complete work items, and read recently stored topic messages. Telegram does not expose arbitrary old topic history to bots, so message history tools can only return messages observed after this bot-side storage was enabled.
 
 The bot publishes its slash-command menu to Telegram on startup, so newly added commands may require a service restart before they appear in Telegram's `/` picker.
 
@@ -309,7 +315,7 @@ curl -fsS http://127.0.0.1:8787/health
 
 ## Fleet Portability
 
-The live SQLite database remains the runtime source of truth for topic bindings, Codex thread ids, cron jobs, and recent runs. For portability, export a sanitized snapshot into a manager repository:
+The live SQLite database remains the runtime source of truth for topic bindings, Codex thread ids, cron jobs, work items, and recent runs. For portability, export a sanitized snapshot into a manager repository:
 
 ```bash
 npm run build

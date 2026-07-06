@@ -13,6 +13,8 @@ import type {
   SandboxMode,
   ThreadTokenUsageSnapshot,
   TopicBinding,
+  WorkItemRecord,
+  WorkItemStatus,
 } from "./types.js";
 import { Storage } from "./storage.js";
 import { RunQueue } from "./runQueue.js";
@@ -653,6 +655,31 @@ export function createTelegramBot(
       return;
     }
     await reply(ctx, managerTodoText(storage, topic.chatId), config);
+  });
+
+  bot.command("work", async (ctx) => {
+    const topic = getTopicRef(ctx, config);
+    if (!topic) {
+      await reply(ctx, "Use this inside a Telegram forum topic, or enable ALLOW_UNTHREADED_CHATS.", config);
+      return;
+    }
+    await reply(ctx, workItemsText(storage, topic.chatId, /^all$/i.test(ctx.match.trim())), config);
+  });
+
+  bot.command("work_add", async (ctx) => {
+    await handleWorkAddCommand(ctx, config, storage, ctx.match.trim());
+  });
+
+  bot.command("work_done", async (ctx) => {
+    await handleWorkStatusCommand(ctx, config, storage, ctx.match.trim(), "done");
+  });
+
+  bot.command("work_blocked", async (ctx) => {
+    await handleWorkStatusCommand(ctx, config, storage, ctx.match.trim(), "blocked");
+  });
+
+  bot.command("work_cancel", async (ctx) => {
+    await handleWorkStatusCommand(ctx, config, storage, ctx.match.trim(), "canceled");
   });
 
   bot.command("queue_topic", async (ctx) => {
@@ -1343,6 +1370,185 @@ function cronListText(storage: Storage, chatId: number): string {
   ].join("\n");
 }
 
+async function handleWorkAddCommand(ctx: Context, config: AppConfig, storage: Storage, input: string): Promise<void> {
+  const topic = getTopicRef(ctx, config);
+  if (!topic) {
+    await reply(ctx, "Use this inside a Telegram forum topic, or enable ALLOW_UNTHREADED_CHATS.", config);
+    return;
+  }
+
+  const result = createWorkItemForTopic(storage, {
+    chatId: topic.chatId,
+    currentMessageThreadId: topic.messageThreadId,
+    telegramUserId: ctx.from?.id ?? null,
+    input,
+  });
+  await reply(ctx, result.message, config);
+}
+
+async function handleWorkStatusCommand(
+  ctx: Context,
+  config: AppConfig,
+  storage: Storage,
+  input: string,
+  status: WorkItemStatus,
+): Promise<void> {
+  const topic = getTopicRef(ctx, config);
+  if (!topic) {
+    await reply(ctx, "Use this inside a Telegram forum topic, or enable ALLOW_UNTHREADED_CHATS.", config);
+    return;
+  }
+
+  const parsed = parseWorkItemIdAndText(input);
+  if (!parsed) {
+    const command = status === "canceled" ? "cancel" : status === "done" ? "done" : status;
+    await reply(ctx, `Usage: /work_${command} <id> <note>`, config);
+    return;
+  }
+
+  const item = storage.updateWorkItemForChat(topic.chatId, parsed.workItemId, {
+    status,
+    evidence: parsed.text || null,
+  });
+  if (!item) {
+    await reply(ctx, `Could not find work item #${parsed.workItemId}.`, config);
+    return;
+  }
+
+  storage.audit({
+    telegramUserId: ctx.from?.id ?? null,
+    chatId: topic.chatId,
+    messageThreadId: topic.messageThreadId,
+    eventType: "work_item_status",
+    details: { workItemId: item.id, status, evidence: parsed.text || null },
+  });
+  await reply(ctx, `Updated work item #${item.id} to ${item.status}.`, config);
+}
+
+interface CreateWorkItemInput {
+  chatId: number;
+  currentMessageThreadId: number;
+  telegramUserId: number | null;
+  input: string;
+  selector?: string;
+  title?: string;
+  detail?: string | null;
+  priority?: string | null;
+  dueAt?: string | null;
+}
+
+interface CreateWorkItemResult {
+  ok: boolean;
+  message: string;
+  workItemId?: number;
+  topicId?: number;
+  topicName?: string;
+  repoPath?: string;
+  workItem?: WorkItemRecord;
+}
+
+function createWorkItemForTopic(storage: Storage, input: CreateWorkItemInput): CreateWorkItemResult {
+  const parsed = parseWorkAddInput(storage, input.chatId, input.currentMessageThreadId, input.input, input.selector, input.title);
+  if (!parsed.ok) {
+    return { ok: false, message: parsed.message };
+  }
+
+  const item = storage.createWorkItem({
+    chatId: input.chatId,
+    bindingId: parsed.binding.id,
+    createdByUserId: input.telegramUserId,
+    title: parsed.title,
+    detail: input.detail ?? null,
+    priority: input.priority ?? null,
+    dueAt: input.dueAt ?? null,
+  });
+  storage.audit({
+    telegramUserId: input.telegramUserId,
+    chatId: input.chatId,
+    messageThreadId: input.currentMessageThreadId,
+    eventType: "work_item_created",
+    details: {
+      workItemId: item.id,
+      targetMessageThreadId: parsed.binding.messageThreadId,
+      title: parsed.title,
+    },
+  });
+
+  return {
+    ok: true,
+    message: [
+      `Created work item #${item.id} for ${topicDisplayName(parsed.binding)}.`,
+      `Status: ${item.status}`,
+      `Title: ${item.title}`,
+    ].join("\n"),
+    workItemId: item.id,
+    topicId: parsed.binding.messageThreadId,
+    topicName: topicDisplayName(parsed.binding),
+    repoPath: parsed.binding.repoPath,
+    workItem: item,
+  };
+}
+
+type ParsedWorkAddInput =
+  | { ok: true; binding: TopicBinding; title: string }
+  | { ok: false; message: string };
+
+function parseWorkAddInput(
+  storage: Storage,
+  chatId: number,
+  currentMessageThreadId: number,
+  input: string,
+  explicitSelector?: string,
+  explicitTitle?: string,
+): ParsedWorkAddInput {
+  if (explicitSelector || explicitTitle) {
+    const selector = explicitSelector?.trim() ?? "";
+    const title = explicitTitle?.trim() ?? "";
+    if (!selector || !title) {
+      return { ok: false, message: "create_work_item requires topic and title." };
+    }
+    const binding = findManagerTargetBinding(storage, chatId, selector);
+    return binding
+      ? { ok: true, binding, title }
+      : { ok: false, message: `Could not find managed topic: ${selector}` };
+  }
+
+  const trimmed = input.trim();
+  if (!trimmed) {
+    return {
+      ok: false,
+      message: [
+        "Usage:",
+        codeBlock(["/work_add <title>", "/work_add <topic-id-or-name> <title>"].join("\n")),
+      ].join("\n"),
+    };
+  }
+
+  const currentBinding = storage.getBinding(chatId, currentMessageThreadId);
+  const routed = parseManagerQueueTopicRequest(trimmed);
+  if (routed) {
+    const target = findManagerTargetBinding(storage, chatId, routed.selector);
+    if (target) {
+      return { ok: true, binding: target, title: routed.prompt };
+    }
+  }
+
+  if (currentBinding) {
+    return { ok: true, binding: currentBinding, title: trimmed };
+  }
+
+  return { ok: false, message: "Use /work_add inside a bound topic or provide a topic selector." };
+}
+
+function parseWorkItemIdAndText(input: string): { workItemId: number; text: string } | null {
+  const match = input.trim().match(/^#?(\d+)(?:\s+([\s\S]+))?$/);
+  if (!match) {
+    return null;
+  }
+  const workItemId = Number.parseInt(match[1] ?? "", 10);
+  return Number.isSafeInteger(workItemId) ? { workItemId, text: (match[2] ?? "").trim() } : null;
+}
+
 export async function handleTelegramBridgeRequest(input: {
   storage: Storage;
   bot: Bot;
@@ -1407,6 +1613,84 @@ export async function handleTelegramBridgeRequest(input: {
     return {
       ok: changed,
       message: changed ? `Disabled cron #${request.cronId}.` : `Could not find cron #${request.cronId}.`,
+    };
+  }
+
+  if (request.action === "list_work_items") {
+    const workItems = storage.listWorkItemsForChat(request.chatId, {
+      includeClosed: request.includeClosed ?? false,
+      limit: request.limit ?? 50,
+    });
+    return {
+      ok: true,
+      message: workItems.length > 0 ? `Found ${workItems.length} work item(s).` : "No work items found.",
+      workItems: workItems.map((item) => formatWorkItemForBridge(storage, item)),
+    };
+  }
+
+  if (request.action === "create_work_item") {
+    const selector = request.selector?.trim() ?? "";
+    const title = request.title?.trim() ?? "";
+    if (!selector || !title) {
+      return { ok: false, message: "create_work_item requires topic and title." };
+    }
+    return createWorkItemForTopic(storage, {
+      chatId: request.chatId,
+      currentMessageThreadId: 0,
+      telegramUserId: null,
+      input: "",
+      selector,
+      title,
+      detail: request.detail?.trim() || null,
+      priority: request.priority?.trim() || null,
+      dueAt: request.dueAt?.trim() || null,
+    });
+  }
+
+  if (request.action === "update_work_item" || request.action === "complete_work_item") {
+    if (!request.workItemId) {
+      return { ok: false, message: `${request.action} requires workItemId.` };
+    }
+    const status: WorkItemStatus | undefined =
+      request.action === "complete_work_item"
+        ? "done"
+        : request.status
+          ? normalizeWorkItemStatus(request.status) ?? undefined
+          : undefined;
+    if (request.status && !status) {
+      return { ok: false, message: "status must be one of open, in_progress, blocked, done, canceled." };
+    }
+    const update: {
+      status?: WorkItemStatus;
+      detail?: string | null;
+      priority?: string;
+      evidence?: string | null;
+      dueAt?: string | null;
+    } = {};
+    if (status) {
+      update.status = status;
+    }
+    if (request.detail !== undefined) {
+      update.detail = request.detail;
+    }
+    if (request.priority !== undefined) {
+      update.priority = request.priority;
+    }
+    if (request.evidence !== undefined) {
+      update.evidence = request.evidence;
+    }
+    if (request.dueAt !== undefined) {
+      update.dueAt = request.dueAt;
+    }
+    const item = storage.updateWorkItemForChat(request.chatId, request.workItemId, update);
+    if (!item) {
+      return { ok: false, message: `Could not find work item #${request.workItemId}.` };
+    }
+    return {
+      ok: true,
+      message: `Updated work item #${item.id} to ${item.status}.`,
+      workItemId: item.id,
+      workItem: formatWorkItemForBridge(storage, item),
     };
   }
 
@@ -2579,6 +2863,7 @@ function voiceTranscriptPrompt(transcript: string): string {
 function managerDashboardText(storage: Storage, chatId: number): string {
   const bindings = storage.listBindingsForChat(chatId);
   const actionable = storage.listActionableRunsForChat(chatId, 12);
+  const workItems = storage.listWorkItemsForChat(chatId, { limit: 12 });
   const running = actionable.filter((item) => item.run.status === "running").length;
   const queued = actionable.filter((item) => item.run.status === "queued").length;
   const failed = actionable.filter((item) => item.run.status === "failed").length;
@@ -2593,8 +2878,14 @@ function managerDashboardText(storage: Storage, chatId: number): string {
         `running: ${running}`,
         `queued: ${queued}`,
         `failed needing review: ${failed}`,
+        `open work items: ${workItems.length}`,
       ].join("\n"),
     ),
+    "Work items:",
+    workItems.length > 0
+      ? codeBlock(workItems.map((item) => formatWorkItemLine(storage, item)).join("\n"))
+      : codeBlock("none"),
+    "",
     "Active work:",
     actionable.length > 0
       ? codeBlock(actionable.map(({ binding, run }) => formatManagerRunLine(binding, run)).join("\n"))
@@ -2634,13 +2925,12 @@ function managerTopicsText(storage: Storage, chatId: number): string {
 }
 
 function managerTodoText(storage: Storage, chatId: number): string {
+  const workItems = storage.listWorkItemsForChat(chatId, { limit: 30 });
   const actionable = storage.listActionableRunsForChat(chatId, 20);
-  if (actionable.length === 0) {
+  if (workItems.length === 0 && actionable.length === 0) {
     return [
       "Topic todo:",
-      codeBlock("No queued, running, or failed runs found."),
-      "",
-      "Explicit work-item tracking is the next layer; this view currently derives todo state from run status.",
+      codeBlock("No open work items, queued runs, running runs, or failed runs found."),
     ].join("\n");
   }
 
@@ -2652,6 +2942,9 @@ function managerTodoText(storage: Storage, chatId: number): string {
 
   return [
     "Topic todo:",
+    workItems.length > 0
+      ? ["", "Work items:", codeBlock(workItems.map((item) => formatWorkItemLine(storage, item)).join("\n"))].join("\n")
+      : "",
     ...grouped.flatMap(([label, items]) =>
       items.length > 0
         ? [
@@ -2662,6 +2955,55 @@ function managerTodoText(storage: Storage, chatId: number): string {
         : [],
     ),
   ].join("\n");
+}
+
+function workItemsText(storage: Storage, chatId: number, includeClosed: boolean): string {
+  const workItems = storage.listWorkItemsForChat(chatId, { includeClosed, limit: 50 });
+  if (workItems.length === 0) {
+    return includeClosed ? "No work items in this chat yet." : "No open work items in this chat yet.";
+  }
+  return [
+    includeClosed ? "Work items:" : "Open work items:",
+    codeBlock(workItems.map((item) => formatWorkItemLine(storage, item)).join("\n")),
+  ].join("\n");
+}
+
+function formatWorkItemLine(storage: Storage, item: WorkItemRecord): string {
+  const binding = item.bindingId ? storage.getBindingById(item.bindingId) : null;
+  const target = binding ? topicDisplayName(binding) : "unassigned";
+  const due = item.dueAt ? ` due:${item.dueAt}` : "";
+  const evidence = item.evidence ? ` - ${oneLine(item.evidence, 70)}` : "";
+  return `#${item.id} ${item.status.padEnd(11)} ${item.priority.padEnd(7)} ${target}${due} - ${oneLine(item.title, 90)}${evidence}`;
+}
+
+function formatWorkItemForBridge(storage: Storage, item: WorkItemRecord): Record<string, unknown> {
+  const binding = item.bindingId ? storage.getBindingById(item.bindingId) : null;
+  return {
+    workItemId: item.id,
+    status: item.status,
+    priority: item.priority,
+    title: item.title,
+    detail: item.detail,
+    evidence: item.evidence,
+    dueAt: item.dueAt,
+    completedAt: item.completedAt,
+    updatedAt: item.updatedAt,
+    topicId: binding?.messageThreadId ?? null,
+    topicName: binding ? topicDisplayName(binding) : null,
+    repoPath: binding?.repoPath ?? null,
+    lastRunId: item.lastRunId,
+  };
+}
+
+function normalizeWorkItemStatus(value: string): WorkItemStatus | null {
+  const normalized = value.trim().toLowerCase().replace(/-/g, "_");
+  return normalized === "open" ||
+    normalized === "in_progress" ||
+    normalized === "blocked" ||
+    normalized === "done" ||
+    normalized === "canceled"
+    ? normalized
+    : null;
 }
 
 function formatManagerRunLine(binding: TopicBinding, run: RunRecord): string {
@@ -2879,7 +3221,14 @@ function helpText(): string {
     "/compact - compact this topic's Codex thread when using OpenAI",
     "/dashboard - show all topic activity",
     "/topics - list all bound topics",
-    "/todo - show running, queued, and failed work",
+    "/todo - show open work items plus running, queued, and failed runs",
+    "/work - list open work items",
+    "/work all - list open and closed work items",
+    "/work_add <title> - create a work item for this topic",
+    "/work_add <topic-id-or-name> <title> - create a work item for another topic",
+    "/work_done <id> <evidence> - mark a work item done",
+    "/work_blocked <id> <reason> - mark a work item blocked",
+    "/work_cancel <id> <reason> - cancel a work item",
     "/status - show active task and context usage",
     "/stop - stop the active Codex process",
     "/diff - show diff summary and attach full diff when large",
@@ -2916,7 +3265,12 @@ export function telegramCommandMenu(): Array<{ command: string; description: str
     { command: "compact", description: "Compact OpenAI thread" },
     { command: "dashboard", description: "Show topic activity" },
     { command: "topics", description: "List managed topic bindings" },
-    { command: "todo", description: "Show todo from run state" },
+    { command: "todo", description: "Show work items and run state" },
+    { command: "work", description: "List work items" },
+    { command: "work_add", description: "Create a work item" },
+    { command: "work_done", description: "Mark work item done" },
+    { command: "work_blocked", description: "Mark work item blocked" },
+    { command: "work_cancel", description: "Cancel a work item" },
     { command: "status", description: "Show task and context usage" },
     { command: "stop", description: "Stop the active Codex process" },
     { command: "diff", description: "Show git diff summary" },

@@ -8,6 +8,8 @@ import type {
   SandboxMode,
   ThreadTokenUsageSnapshot,
   TopicBinding,
+  WorkItemRecord,
+  WorkItemStatus,
 } from "./types.js";
 
 interface BindingRow {
@@ -96,6 +98,23 @@ interface CronJobRow {
   run_count: number;
   created_at: string;
   updated_at: string;
+}
+
+interface WorkItemRow {
+  id: number;
+  chat_id: number;
+  binding_id: number | null;
+  created_by_user_id: number | null;
+  title: string;
+  detail: string | null;
+  status: WorkItemStatus;
+  priority: string;
+  evidence: string | null;
+  last_run_id: number | null;
+  due_at: string | null;
+  created_at: string;
+  updated_at: string;
+  completed_at: string | null;
 }
 
 export interface PendingContextFileRecord {
@@ -284,6 +303,25 @@ function mapCronJob(row: CronJobRow): CronJobRecord {
   };
 }
 
+function mapWorkItem(row: WorkItemRow): WorkItemRecord {
+  return {
+    id: row.id,
+    chatId: row.chat_id,
+    bindingId: row.binding_id,
+    createdByUserId: row.created_by_user_id,
+    title: row.title,
+    detail: row.detail,
+    status: row.status,
+    priority: row.priority,
+    evidence: row.evidence,
+    lastRunId: row.last_run_id,
+    dueAt: row.due_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    completedAt: row.completed_at,
+  };
+}
+
 function parseJsonObject(value: string): Record<string, unknown> {
   try {
     const parsed = JSON.parse(value) as unknown;
@@ -421,6 +459,28 @@ export class Storage {
         ON cron_jobs (enabled, next_run_at);
       CREATE INDEX IF NOT EXISTS cron_jobs_chat_idx
         ON cron_jobs (chat_id, id);
+
+      CREATE TABLE IF NOT EXISTS work_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        chat_id INTEGER NOT NULL,
+        binding_id INTEGER REFERENCES topic_bindings(id) ON DELETE SET NULL,
+        created_by_user_id INTEGER,
+        title TEXT NOT NULL,
+        detail TEXT,
+        status TEXT NOT NULL DEFAULT 'open',
+        priority TEXT NOT NULL DEFAULT 'normal',
+        evidence TEXT,
+        last_run_id INTEGER REFERENCES runs(id) ON DELETE SET NULL,
+        due_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        completed_at TEXT
+      );
+
+      CREATE INDEX IF NOT EXISTS work_items_chat_status_idx
+        ON work_items (chat_id, status, updated_at);
+      CREATE INDEX IF NOT EXISTS work_items_binding_idx
+        ON work_items (binding_id, status);
     `);
 
     this.addColumnIfMissing("topic_bindings", "model", "TEXT");
@@ -429,6 +489,134 @@ export class Storage {
     this.addColumnIfMissing("topic_bindings", "plan_mode", "INTEGER NOT NULL DEFAULT 0");
     this.addColumnIfMissing("topic_bindings", "token_usage_json", "TEXT");
     this.addColumnIfMissing("runs", "plan_mode", "INTEGER NOT NULL DEFAULT 0");
+  }
+
+  createWorkItem(input: {
+    chatId: number;
+    bindingId: number | null;
+    createdByUserId: number | null;
+    title: string;
+    detail?: string | null;
+    priority?: string | null;
+    dueAt?: string | null;
+  }): WorkItemRecord {
+    const timestamp = now();
+    const result = this.db
+      .prepare(
+        `
+        INSERT INTO work_items (
+          chat_id, binding_id, created_by_user_id, title, detail, status, priority, due_at, created_at, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, 'open', ?, ?, ?, ?)
+      `,
+      )
+      .run(
+        input.chatId,
+        input.bindingId,
+        input.createdByUserId,
+        input.title,
+        input.detail ?? null,
+        input.priority?.trim() || "normal",
+        input.dueAt ?? null,
+        timestamp,
+        timestamp,
+      );
+    const item = this.getWorkItem(Number(result.lastInsertRowid));
+    if (!item) {
+      throw new Error("Failed to load work item after insert");
+    }
+    return item;
+  }
+
+  getWorkItem(workItemId: number): WorkItemRecord | null {
+    const row = this.db.prepare("SELECT * FROM work_items WHERE id = ?").get(workItemId) as
+      | WorkItemRow
+      | undefined;
+    return row ? mapWorkItem(row) : null;
+  }
+
+  listWorkItemsForChat(chatId: number, options: { includeClosed?: boolean; limit?: number } = {}): WorkItemRecord[] {
+    const limit = Math.max(1, Math.min(200, Math.trunc(options.limit ?? 50)));
+    const statusesClause = options.includeClosed ? "" : "AND status NOT IN ('done', 'canceled')";
+    const rows = this.db
+      .prepare(
+        `
+        SELECT * FROM work_items
+        WHERE chat_id = ?
+          ${statusesClause}
+        ORDER BY
+          CASE status
+            WHEN 'in_progress' THEN 0
+            WHEN 'blocked' THEN 1
+            WHEN 'open' THEN 2
+            WHEN 'done' THEN 3
+            ELSE 4
+          END,
+          updated_at DESC,
+          id DESC
+        LIMIT ?
+      `,
+      )
+      .all(chatId, limit) as WorkItemRow[];
+    return rows.map(mapWorkItem);
+  }
+
+  updateWorkItemForChat(
+    chatId: number,
+    workItemId: number,
+    input: {
+      status?: WorkItemStatus;
+      title?: string;
+      detail?: string | null;
+      priority?: string;
+      evidence?: string | null;
+      lastRunId?: number | null;
+      dueAt?: string | null;
+    },
+  ): WorkItemRecord | null {
+    const current = this.getWorkItem(workItemId);
+    if (!current || current.chatId !== chatId) {
+      return null;
+    }
+
+    const status = input.status ?? current.status;
+    const completedAt =
+      status === "done" || status === "canceled"
+        ? current.completedAt ?? now()
+        : status === "open" || status === "in_progress" || status === "blocked"
+          ? null
+          : current.completedAt;
+
+    this.db
+      .prepare(
+        `
+        UPDATE work_items
+        SET title = ?,
+            detail = ?,
+            status = ?,
+            priority = ?,
+            evidence = ?,
+            last_run_id = ?,
+            due_at = ?,
+            completed_at = ?,
+            updated_at = ?
+        WHERE chat_id = ? AND id = ?
+      `,
+      )
+      .run(
+        input.title?.trim() || current.title,
+        input.detail !== undefined ? input.detail : current.detail,
+        status,
+        input.priority?.trim() || current.priority,
+        input.evidence !== undefined ? input.evidence : current.evidence,
+        input.lastRunId !== undefined ? input.lastRunId : current.lastRunId,
+        input.dueAt !== undefined ? input.dueAt : current.dueAt,
+        completedAt,
+        now(),
+        chatId,
+        workItemId,
+      );
+    return this.getWorkItem(workItemId);
   }
 
   createCronJob(input: {

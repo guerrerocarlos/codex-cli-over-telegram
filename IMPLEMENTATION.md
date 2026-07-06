@@ -224,6 +224,29 @@ CREATE TABLE cron_jobs (
 
 The service owns cron scheduling inside the long-running bot process. Every minute it loads due enabled jobs, queues a normal run in the target topic, records the run id, and advances `next_run_at`. This keeps scheduled work visible in Telegram and lets the existing per-topic queue and repo locks control execution.
 
+### `work_items`
+
+```sql
+CREATE TABLE work_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  chat_id INTEGER NOT NULL,
+  binding_id INTEGER REFERENCES topic_bindings(id) ON DELETE SET NULL,
+  created_by_user_id INTEGER,
+  title TEXT NOT NULL,
+  detail TEXT,
+  status TEXT NOT NULL DEFAULT 'open',
+  priority TEXT NOT NULL DEFAULT 'normal',
+  evidence TEXT,
+  last_run_id INTEGER REFERENCES runs(id) ON DELETE SET NULL,
+  due_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  completed_at TEXT
+);
+```
+
+Work items are explicit manager state, separate from transient Codex run records. They let the Telegram group track objectives that may span many runs, cron wakeups, or verification passes. The app-server bridge exposes matching `create_work_item`, `list_work_items`, `update_work_item`, and `complete_work_item` tools so agents can keep supervision state current without asking the user to run Telegram commands manually.
+
 ## Bot Commands
 
 ### Required MVP Commands
@@ -295,6 +318,18 @@ Attach a recurring prompt to another bound topic. This is useful from a manager 
 ```
 
 List cron jobs in the chat or disable one. The app-server bridge exposes matching `create_cron`, `list_crons`, and `delete_cron` tools so an agent can schedule its own continuation or verification loop.
+
+```text
+/work
+/work all
+/work_add <title>
+/work_add <topic-id-or-name> <title>
+/work_done <id> <evidence>
+/work_blocked <id> <reason>
+/work_cancel <id> <reason>
+```
+
+Create and maintain persistent work items for a topic or for another managed topic. `/todo` includes these explicit items first, then falls back to running, queued, and failed run state.
 
 ```text
 /stop

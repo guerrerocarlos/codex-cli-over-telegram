@@ -70,6 +70,25 @@ export interface CronJobRecord {
   updatedAt: string;
 }
 
+export type WorkItemStatus = "open" | "in_progress" | "blocked" | "done" | "canceled";
+
+export interface WorkItemRecord {
+  id: number;
+  chatId: number;
+  bindingId: number | null;
+  createdByUserId: number | null;
+  title: string;
+  detail: string | null;
+  status: WorkItemStatus;
+  priority: string;
+  evidence: string | null;
+  lastRunId: number | null;
+  dueAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  completedAt: string | null;
+}
+
 export interface InterruptedRunRecord extends RunRecord {
   interruptedStatus: Extract<RunStatus, "queued" | "running">;
 }

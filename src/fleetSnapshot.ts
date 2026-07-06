@@ -85,6 +85,22 @@ interface RunRow {
   error_message: string | null;
 }
 
+interface WorkItemRow {
+  id: number;
+  chat_id: number;
+  binding_id: number | null;
+  title: string;
+  detail: string | null;
+  status: string;
+  priority: string;
+  evidence: string | null;
+  last_run_id: number | null;
+  due_at: string | null;
+  created_at: string;
+  updated_at: string;
+  completed_at: string | null;
+}
+
 export async function exportFleetSnapshot(options: ExportOptions): Promise<void> {
   const db = new Database(options.databasePath, { readonly: true });
   try {
@@ -94,6 +110,7 @@ export async function exportFleetSnapshot(options: ExportOptions): Promise<void>
       .filter((binding) => manifestRepoPaths.size === 0 || manifestRepoPaths.has(binding.repo_path));
     const bindingIds = bindings.map((binding) => binding.id);
     const crons = listCronRows(db, bindingIds);
+    const workItems = listWorkItemRows(db, bindingIds);
     const runs = listRecentRuns(db, bindingIds, options.recentRuns);
     const repos = await Promise.all(
       (manifest?.repos ?? bindings.map(bindingToRepoSpec)).map(async (repo) => ({
@@ -120,6 +137,7 @@ export async function exportFleetSnapshot(options: ExportOptions): Promise<void>
       repos,
       topicBindings: bindings.map(formatBinding),
       cronJobs: crons.map(formatCron),
+      workItems: workItems.map(formatWorkItem),
       recentRuns: runs.map(formatRun),
       notes: [
         "codexThreadId is soft state. Restore should prefer repo-owned docs/agent context when a thread cannot resume.",
@@ -228,6 +246,15 @@ function listRecentRuns(db: Database.Database, bindingIds: number[], limitPerBin
   return bindingIds.flatMap((bindingId) => stmt.all(bindingId, limitPerBinding) as RunRow[]);
 }
 
+function listWorkItemRows(db: Database.Database, bindingIds: number[]): WorkItemRow[] {
+  if (bindingIds.length === 0) {
+    return [];
+  }
+  return db
+    .prepare(`SELECT * FROM work_items WHERE binding_id IN (${bindingIds.map(() => "?").join(",")}) ORDER BY id`)
+    .all(...bindingIds) as WorkItemRow[];
+}
+
 function bindingToRepoSpec(binding: BindingRow): FleetRepoSpec {
   return {
     name: path.basename(binding.repo_path),
@@ -287,6 +314,24 @@ function formatRun(run: RunRow): Record<string, unknown> {
     completedAt: run.completed_at,
     finalMessage: run.final_message ? truncate(run.final_message, 4000) : null,
     errorMessage: run.error_message ? truncate(run.error_message, 4000) : null,
+  };
+}
+
+function formatWorkItem(item: WorkItemRow): Record<string, unknown> {
+  return {
+    id: item.id,
+    chatId: item.chat_id,
+    bindingId: item.binding_id,
+    title: item.title,
+    detail: item.detail,
+    status: item.status,
+    priority: item.priority,
+    evidence: item.evidence,
+    lastRunId: item.last_run_id,
+    dueAt: item.due_at,
+    createdAt: item.created_at,
+    updatedAt: item.updated_at,
+    completedAt: item.completed_at,
   };
 }
 

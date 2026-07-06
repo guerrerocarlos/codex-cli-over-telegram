@@ -18,6 +18,14 @@ interface ToolCallArguments {
   prompt?: unknown;
   cron?: unknown;
   cronId?: unknown;
+  workItemId?: unknown;
+  title?: unknown;
+  detail?: unknown;
+  status?: unknown;
+  priority?: unknown;
+  evidence?: unknown;
+  dueAt?: unknown;
+  includeClosed?: unknown;
   limit?: unknown;
 }
 
@@ -184,6 +192,110 @@ async function handleLine(line: string): Promise<void> {
                 additionalProperties: false,
               },
             },
+            {
+              name: "create_work_item",
+              description:
+                "Create a persistent work item attached to a bound Telegram topic. Use this for tasks the manager should supervise across turns.",
+              inputSchema: {
+                type: "object",
+                properties: {
+                  topic: {
+                    type: "string",
+                    description: "Topic id, topic name, or repo folder name.",
+                  },
+                  title: {
+                    type: "string",
+                    description: "Short objective for the work item.",
+                  },
+                  detail: {
+                    type: "string",
+                    description: "Optional extra context, acceptance criteria, or verification instructions.",
+                  },
+                  priority: {
+                    type: "string",
+                    description: "Optional priority label, for example low, normal, high, urgent.",
+                  },
+                  dueAt: {
+                    type: "string",
+                    description: "Optional ISO timestamp or human-readable due marker.",
+                  },
+                },
+                required: ["topic", "title"],
+                additionalProperties: false,
+              },
+            },
+            {
+              name: "list_work_items",
+              description: "List persistent work items for this Telegram chat.",
+              inputSchema: {
+                type: "object",
+                properties: {
+                  includeClosed: {
+                    type: "boolean",
+                    description: "Include done and canceled items. Defaults to false.",
+                  },
+                  limit: {
+                    type: "number",
+                    description: "Maximum items to return, up to 200. Defaults to 50.",
+                  },
+                },
+                additionalProperties: false,
+              },
+            },
+            {
+              name: "update_work_item",
+              description: "Update a persistent work item status, priority, details, evidence, or due marker.",
+              inputSchema: {
+                type: "object",
+                properties: {
+                  workItemId: {
+                    type: "number",
+                    description: "Work item id.",
+                  },
+                  status: {
+                    type: "string",
+                    description: "One of open, in_progress, blocked, done, canceled.",
+                  },
+                  detail: {
+                    type: "string",
+                    description: "Replacement detail text.",
+                  },
+                  priority: {
+                    type: "string",
+                    description: "Replacement priority label.",
+                  },
+                  evidence: {
+                    type: "string",
+                    description: "Evidence, blocker reason, or completion note.",
+                  },
+                  dueAt: {
+                    type: "string",
+                    description: "Replacement due marker.",
+                  },
+                },
+                required: ["workItemId"],
+                additionalProperties: false,
+              },
+            },
+            {
+              name: "complete_work_item",
+              description: "Mark a persistent work item done with optional evidence.",
+              inputSchema: {
+                type: "object",
+                properties: {
+                  workItemId: {
+                    type: "number",
+                    description: "Work item id.",
+                  },
+                  evidence: {
+                    type: "string",
+                    description: "Completion evidence or verification summary.",
+                  },
+                },
+                required: ["workItemId"],
+                additionalProperties: false,
+              },
+            },
           ],
         });
         return;
@@ -208,7 +320,11 @@ async function callTool(params: any): Promise<unknown> {
     toolName !== "create_topic" &&
     toolName !== "create_cron" &&
     toolName !== "list_crons" &&
-    toolName !== "delete_cron"
+    toolName !== "delete_cron" &&
+    toolName !== "create_work_item" &&
+    toolName !== "list_work_items" &&
+    toolName !== "update_work_item" &&
+    toolName !== "complete_work_item"
   ) {
     throw new Error(`Unknown tool: ${params?.name ?? "missing"}`);
   }
@@ -263,6 +379,61 @@ async function callTool(params: any): Promise<unknown> {
       throw new Error("delete_cron requires a numeric cronId argument.");
     }
     body.cronId = cronId;
+  }
+
+  if (toolName === "create_work_item") {
+    const topic = typeof args.topic === "string" ? args.topic.trim() : "";
+    const title = typeof args.title === "string" ? args.title.trim() : "";
+    if (!topic || !title) {
+      throw new Error("create_work_item requires non-empty topic and title arguments.");
+    }
+    body.selector = topic;
+    body.title = title;
+    if (typeof args.detail === "string") {
+      body.detail = args.detail.trim();
+    }
+    if (typeof args.priority === "string") {
+      body.priority = args.priority.trim();
+    }
+    if (typeof args.dueAt === "string") {
+      body.dueAt = args.dueAt.trim();
+    }
+  }
+
+  if (toolName === "list_work_items") {
+    if (typeof args.includeClosed === "boolean") {
+      body.includeClosed = args.includeClosed;
+    }
+    if (typeof args.limit === "number" && Number.isFinite(args.limit)) {
+      body.limit = args.limit;
+    }
+  }
+
+  if (toolName === "update_work_item" || toolName === "complete_work_item") {
+    const workItemId =
+      typeof args.workItemId === "number" && Number.isSafeInteger(args.workItemId) ? args.workItemId : null;
+    if (workItemId === null) {
+      throw new Error(`${toolName} requires a numeric workItemId argument.`);
+    }
+    body.workItemId = workItemId;
+    if (toolName === "complete_work_item") {
+      body.status = "done";
+    }
+    if (typeof args.status === "string") {
+      body.status = args.status.trim();
+    }
+    if (typeof args.detail === "string") {
+      body.detail = args.detail.trim();
+    }
+    if (typeof args.priority === "string") {
+      body.priority = args.priority.trim();
+    }
+    if (typeof args.evidence === "string") {
+      body.evidence = args.evidence.trim();
+    }
+    if (typeof args.dueAt === "string") {
+      body.dueAt = args.dueAt.trim();
+    }
   }
 
   const response = await fetch(bridgeConfig.url, {

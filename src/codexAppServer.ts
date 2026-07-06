@@ -254,6 +254,12 @@ export class CodexAppServerBackend implements CodexBackend {
         "mcp_servers.telegram_manager.tools.queue_topic.approval_mode=\"auto\"",
         "-c",
         "mcp_servers.telegram_manager.tools.create_cron.approval_mode=\"auto\"",
+        "-c",
+        "mcp_servers.telegram_manager.tools.create_work_item.approval_mode=\"auto\"",
+        "-c",
+        "mcp_servers.telegram_manager.tools.update_work_item.approval_mode=\"auto\"",
+        "-c",
+        "mcp_servers.telegram_manager.tools.complete_work_item.approval_mode=\"auto\"",
         ...codexProviderArgs(this.config, request?.modelProvider ?? this.config.defaultModelProvider),
         ...codexServiceTierArgs(
           request?.modelProvider === "openai" ? request.modelServiceTier : null,
