@@ -47,6 +47,7 @@ async function main(): Promise<void> {
       databasePath: stringFlag(flags, "database", defaultDatabasePath()),
       managerRepoPath,
       manifestPath,
+      recentRuns: numberFlag(flags, "recent-runs", 5),
       commit: !flags.has("no-commit"),
       push: flags.has("push"),
     });
@@ -115,7 +116,7 @@ function printHelp(): void {
 
   fleet export --out <snapshot.json> [--manifest <fleet.json>] [--database <state.sqlite>]
   fleet restore --manifest <fleet.json> [--database <state.sqlite>] [--clone] [--create-topics] [--dry-run]
-  fleet backup --manager-repo <path> [--manifest <fleet.json>] [--database <state.sqlite>] [--push] [--no-commit]
+  fleet backup --manager-repo <path> [--manifest <fleet.json>] [--database <state.sqlite>] [--recent-runs <n>] [--push] [--no-commit]
 
 Notes:
   - export writes sanitized Telegram/Codex binding state to JSON.

@@ -196,6 +196,7 @@ export async function backupFleetState(options: {
   databasePath: string;
   managerRepoPath: string;
   manifestPath: string;
+  recentRuns: number;
   commit: boolean;
   push: boolean;
 }): Promise<string> {
@@ -206,13 +207,13 @@ export async function backupFleetState(options: {
     databasePath: options.databasePath,
     manifestPath: options.manifestPath,
     outPath: latestPath,
-    recentRuns: 5,
+    recentRuns: options.recentRuns,
   });
   await exportFleetSnapshot({
     databasePath: options.databasePath,
     manifestPath: options.manifestPath,
     outPath: datedPath,
-    recentRuns: 5,
+    recentRuns: options.recentRuns,
   });
 
   if (options.commit) {
@@ -345,7 +346,11 @@ function gitSnapshot(repoPath: string): Record<string, unknown> {
 }
 
 function gitRemote(repoPath: string): string | null {
-  return gitOutput(["remote", "get-url", "origin"], repoPath);
+  return sanitizeRemote(gitOutput(["remote", "get-url", "origin"], repoPath));
+}
+
+function sanitizeRemote(remote: string | null): string | null {
+  return remote ? remote.replace(/(https?:\/\/)[^/@]+@/i, "$1<redacted>@") : null;
 }
 
 function gitOutput(args: string[], cwd: string): string | null {

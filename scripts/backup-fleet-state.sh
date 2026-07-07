@@ -6,6 +6,7 @@ manager_repo="${MANAGER_REPO:-/home/gnu/inglesconliza-manager}"
 database_path="${DATABASE_PATH:-$app_dir/data/state.sqlite}"
 manifest_path="${FLEET_MANIFEST:-$manager_repo/fleet.json}"
 push_flag="${PUSH_FLEET_BACKUP:-true}"
+recent_runs="${FLEET_RECENT_RUNS:-5}"
 
 args=(
   fleet:backup
@@ -13,6 +14,7 @@ args=(
   --manager-repo "$manager_repo"
   --manifest "$manifest_path"
   --database "$database_path"
+  --recent-runs "$recent_runs"
 )
 
 if [ "$push_flag" = "true" ]; then
