@@ -23,6 +23,14 @@
 - `topic_messages` currently records incoming Telegram messages used by manager tools; outbound bot replies are not stored there.
 - Telegram may echo bot-authored messages as updates from the bot account, which can create noisy `unauthorized_message` audit entries for the bot user.
 
+## Telegram Groups
+
+- `ROOT CODEX`: `-1004391890477`
+- `ICL CODEX (old)`: `-1003947953517`
+- `CODEX INGLESCONLIZA.COM`: `-1003696100403`
+
+`CODEX INGLESCONLIZA.COM` was first observed as temporary group id `-5310780057`, then migrated by Telegram to forum supergroup id `-1003696100403`. Keep the supergroup id in the dynamic chat allowlist.
+
 ## 2026-07-08 Telegram Restart Loop
 
 - Incident: the bot entered a restart loop while resuming LIFE cron run `#1095`.
