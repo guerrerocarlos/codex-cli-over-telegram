@@ -22,3 +22,10 @@
 
 - `topic_messages` currently records incoming Telegram messages used by manager tools; outbound bot replies are not stored there.
 - Telegram may echo bot-authored messages as updates from the bot account, which can create noisy `unauthorized_message` audit entries for the bot user.
+
+## 2026-07-08 Telegram Restart Loop
+
+- Incident: the bot entered a restart loop while resuming LIFE cron run `#1095`.
+- Cause: the LIFE group had migrated from chat id `-5568898498` to supergroup chat id `-1004361900873`; Telegram returned `migrate_to_chat_id`, and the send error was previously fatal.
+- Recovery: cron job `#1` and current run `#1095` now point to binding `#32` / chat `-1004361900873`; stale duplicate run `#1048` was marked failed.
+- Code fix: Telegram sends now retry once against Telegram's returned migrated chat id instead of crashing the process.

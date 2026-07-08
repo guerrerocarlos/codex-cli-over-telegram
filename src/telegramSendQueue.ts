@@ -32,14 +32,28 @@ export class TelegramSendQueue {
     options: SendMessageOptions,
   ): Promise<SendMessageResult> {
     let transientFailures = 0;
+    let effectiveChatId = chatId;
     for (;;) {
       await this.waitForSlot();
 
       try {
-        const message = await api.sendMessage(chatId, text, options);
+        const message = await api.sendMessage(effectiveChatId, text, options);
         this.nextSendAt = Date.now() + this.intervalMs;
         return message;
       } catch (error) {
+        const migrateToChatId = telegramMigrateToChatId(error);
+        if (migrateToChatId !== null && migrateToChatId !== effectiveChatId) {
+          logger.warn("telegram chat migrated; retrying send with new chat id", {
+            oldChatId: effectiveChatId,
+            newChatId: migrateToChatId,
+            error: errorMessage(error),
+          });
+          effectiveChatId = migrateToChatId;
+          transientFailures = 0;
+          this.nextSendAt = Date.now() + this.intervalMs;
+          continue;
+        }
+
         const retryAfterSeconds = telegramRetryAfterSeconds(error);
         if (retryAfterSeconds === null) {
           if (!isTransientTelegramSendError(error)) {
@@ -73,6 +87,18 @@ export class TelegramSendQueue {
       await sleep(waitMs);
     }
   }
+}
+
+function telegramMigrateToChatId(error: unknown): number | null {
+  const details = error as {
+    error_code?: unknown;
+    parameters?: { migrate_to_chat_id?: unknown };
+  };
+  const migrateToChatId = details.parameters?.migrate_to_chat_id;
+  if (details.error_code === 400 && typeof migrateToChatId === "number") {
+    return migrateToChatId;
+  }
+  return null;
 }
 
 function telegramRetryAfterSeconds(error: unknown): number | null {

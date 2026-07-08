@@ -43,6 +43,28 @@ console.log(JSON.stringify(db.prepare(`
 NODE
 ```
 
+## Inspect Chat Migration Failures
+
+```bash
+journalctl -u codex-cli-over-telegram.service -n 200 --no-pager -o short-iso \
+  | rg 'migrate_to_chat_id|group chat was upgraded|telegram chat migrated'
+```
+
+If Telegram reports `migrate_to_chat_id`, update durable rows that still point at the old chat id:
+
+```bash
+node - <<'NODE'
+const Database = require('better-sqlite3');
+const db = new Database('data/state.sqlite');
+const oldChatId = -5568898498;
+const newChatId = -1004361900873;
+const newBindingId = 32;
+const now = new Date().toISOString();
+db.prepare('UPDATE cron_jobs SET chat_id = ?, binding_id = ?, last_error = NULL, updated_at = ? WHERE chat_id = ?')
+  .run(newChatId, newBindingId, now, oldChatId);
+NODE
+```
+
 ## Inspect Recent Messages For A Chat
 
 ```bash
