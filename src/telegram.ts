@@ -2104,17 +2104,7 @@ async function handlePrompt(
   if (queuedBehind > 0) {
     await reply(ctx, `Queued run #${run.id} behind ${queuedBehind} active/queued run(s).`, config);
   } else {
-    await reply(
-      ctx,
-      [
-        `Started run #${run.id}.`,
-        `Repo:\n${codeBlock(binding.repoPath)}`,
-        `Model:\n${codeBlock(await modelLabel(config, binding))}`,
-        `Plan mode:\n${codeBlock(formatPlanMode(run.planMode))}`,
-        `Mode:\n${codeBlock(effectiveRunSandboxMode(config, binding))}`,
-      ].join("\n"),
-      config,
-    );
+    await sendChatAction(bot, binding);
   }
 
   queue.enqueue(key, async () => {
