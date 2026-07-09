@@ -37,3 +37,9 @@
 - Cause: the LIFE group had migrated from chat id `-5568898498` to supergroup chat id `-1004361900873`; Telegram returned `migrate_to_chat_id`, and the send error was previously fatal.
 - Recovery: cron job `#1` and current run `#1095` now point to binding `#32` / chat `-1004361900873`; stale duplicate run `#1048` was marked failed.
 - Code fix: Telegram sends now retry once against Telegram's returned migrated chat id instead of crashing the process.
+
+## 2026-07-09 Omattic Topic Correction
+
+- `coach-omattic-com` was accidentally created in the InglesConLiza CODEX group as topic `559`.
+- The accidental topic was deleted from chat `-1003696100403`.
+- The correct OMATTIC CODEX topic is chat `-1003996402615`, topic `1407`, stored as binding `#101`.
