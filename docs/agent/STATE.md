@@ -43,3 +43,5 @@
 - `coach-omattic-com` was accidentally created in the InglesConLiza CODEX group as topic `559`.
 - The accidental topic was deleted from chat `-1003696100403`.
 - The correct OMATTIC CODEX topic is chat `-1003996402615`, topic `1407`, stored as binding `#101`.
+- Root cause: `managerBridgeMcp` could infer `MANAGER_BRIDGE_CHAT_ID` from an arbitrary running Codex app-server process when the current tool process lacked a chat id, which is unsafe during concurrent multi-group runs.
+- Guardrail: bridge tools now get their chat id only from the current run environment or the current repo path's binding, never from another running process.

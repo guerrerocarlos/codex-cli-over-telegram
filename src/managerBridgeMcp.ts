@@ -473,7 +473,7 @@ function resolveBridgeConfig(): BridgeConfig | null {
   const discoveredEnv = discoverRunningBridgeEnv();
   const url = env.MANAGER_BRIDGE_URL ?? discoveredEnv.MANAGER_BRIDGE_URL ?? defaultBridgeUrl(env);
   const token = env.MANAGER_BRIDGE_TOKEN ?? discoveredEnv.MANAGER_BRIDGE_TOKEN;
-  const chatId = parseChatId(env.MANAGER_BRIDGE_CHAT_ID ?? discoveredEnv.MANAGER_BRIDGE_CHAT_ID) ?? inferChatId(env);
+  const chatId = parseChatId(env.MANAGER_BRIDGE_CHAT_ID) ?? inferChatId(env);
 
   if (!url || !token || chatId === null) {
     return null;
