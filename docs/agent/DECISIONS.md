@@ -12,6 +12,12 @@ The runtime now uses Telegram-native feedback for immediate acknowledgement:
 
 This keeps topic history focused on user prompts, command/tool output, and final answers while still showing that the bot received the prompt.
 
+## 2026-07-09: Send One Assistant Prose Reply Per Turn
+
+Telegram should not forward every `agent_message` event as its own message. App-server can emit multiple assistant message items during a single turn, and forwarding each one creates many short Telegram bubbles and increases rate-limit pressure.
+
+Keep the latest assistant prose in memory and send the final assistant response once when the turn completes. Tool/command/file-change messages may still be sent separately because they are operational progress, not prose chunks.
+
 ## 2026-07-08: InglesConLiza Service Group Scope
 
 The `CODEX INGLESCONLIZA.COM` Telegram group should contain only InglesConLiza.com service repos and direct service dependencies.

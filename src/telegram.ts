@@ -2207,7 +2207,6 @@ async function executeRun(
 ): Promise<void> {
   let lockAcquired = false;
   let finalMessage = "";
-  let lastSentAgentMessage = "";
   let lastProgressAt = 0;
   let richStreamer: TelegramRichDraftStreamer | null = null;
 
@@ -2265,10 +2264,6 @@ async function executeRun(
 
       if (event.type === "agent_message") {
         finalMessage = event.text;
-        if (event.text.trim() && event.text !== lastSentAgentMessage) {
-          await sendText(bot, config, binding, event.text);
-          lastSentAgentMessage = event.text;
-        }
         continue;
       }
 
@@ -2327,13 +2322,13 @@ async function executeRun(
     const completionMessage = finalMessage || "Codex completed without a final message.";
     storage.completeRun(run.id, completionMessage);
     if (richStreamer && (await richStreamer.finish(completionMessage))) {
-      lastSentAgentMessage = completionMessage;
+      // The rich draft was finalized in-place.
     } else {
       await sendText(
         bot,
         config,
         binding,
-        completionMessage === lastSentAgentMessage ? "Done." : completionMessage,
+        completionMessage,
         terminalRunSendOptions(run),
       );
     }
