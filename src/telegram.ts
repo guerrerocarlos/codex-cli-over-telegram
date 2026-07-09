@@ -2196,6 +2196,10 @@ function terminalRunSendOptions(run: RunRecord): SendOptions {
   };
 }
 
+const agentMessageBatchMinChars = 600;
+const agentMessageBatchMaxChars = 1200;
+const agentMessageBatchMaxCount = 4;
+
 async function executeRun(
   bot: Bot,
   config: AppConfig,
@@ -2207,8 +2211,24 @@ async function executeRun(
 ): Promise<void> {
   let lockAcquired = false;
   let finalMessage = "";
+  let lastSentAgentMessage = "";
+  const pendingAgentMessages: string[] = [];
   let lastProgressAt = 0;
   let richStreamer: TelegramRichDraftStreamer | null = null;
+
+  const flushAgentMessages = async (options: SendOptions = {}): Promise<void> => {
+    const text = pendingAgentMessages.join("\n\n").trim();
+    pendingAgentMessages.length = 0;
+    if (!text || text === lastSentAgentMessage) {
+      return;
+    }
+    await sendText(bot, config, binding, text, options);
+    lastSentAgentMessage = text;
+  };
+
+  const flushAgentMessagesBeforeProgress = async (): Promise<void> => {
+    await flushAgentMessages();
+  };
 
   try {
     const sandboxMode = effectiveRunSandboxMode(config, binding);
@@ -2264,6 +2284,28 @@ async function executeRun(
 
       if (event.type === "agent_message") {
         finalMessage = event.text;
+        const text = event.text.trim();
+        if (!text) {
+          continue;
+        }
+
+        if (text.length >= agentMessageBatchMinChars) {
+          await flushAgentMessagesBeforeProgress();
+          if (text !== lastSentAgentMessage) {
+            await sendText(bot, config, binding, text);
+            lastSentAgentMessage = text;
+          }
+          continue;
+        }
+
+        pendingAgentMessages.push(text);
+        const batchText = pendingAgentMessages.join("\n\n");
+        if (
+          pendingAgentMessages.length >= agentMessageBatchMaxCount ||
+          batchText.length >= agentMessageBatchMaxChars
+        ) {
+          await flushAgentMessagesBeforeProgress();
+        }
         continue;
       }
 
@@ -2277,11 +2319,13 @@ async function executeRun(
       }
 
       if (event.type === "command_started") {
+        await flushAgentMessagesBeforeProgress();
         await sendText(bot, config, binding, codeBlock(truncateText(event.text, 900), "bash"));
         continue;
       }
 
       if (event.type === "command_completed") {
+        await flushAgentMessagesBeforeProgress();
         if (event.text.trim()) {
           await sendText(bot, config, binding, codeBlock(truncateText(event.text, 1200)));
         }
@@ -2289,6 +2333,7 @@ async function executeRun(
       }
 
       if (event.type === "file_changed") {
+        await flushAgentMessagesBeforeProgress();
         await sendText(bot, config, binding, `Changed:\n${codeBlock(event.text)}`);
         continue;
       }
@@ -2303,6 +2348,7 @@ async function executeRun(
       }
 
       if (event.type === "failed") {
+        await flushAgentMessagesBeforeProgress();
         storage.failRun(run.id, event.error, event.exitCode ?? null);
         await sendText(
           bot,
@@ -2322,13 +2368,17 @@ async function executeRun(
     const completionMessage = finalMessage || "Codex completed without a final message.";
     storage.completeRun(run.id, completionMessage);
     if (richStreamer && (await richStreamer.finish(completionMessage))) {
-      // The rich draft was finalized in-place.
+      pendingAgentMessages.length = 0;
+      lastSentAgentMessage = completionMessage;
+    } else if (pendingAgentMessages.length > 0 && pendingAgentMessages.at(-1) === completionMessage.trim()) {
+      await flushAgentMessages(terminalRunSendOptions(run));
     } else {
+      await flushAgentMessagesBeforeProgress();
       await sendText(
         bot,
         config,
         binding,
-        completionMessage,
+        completionMessage === lastSentAgentMessage ? "Done." : completionMessage,
         terminalRunSendOptions(run),
       );
     }
