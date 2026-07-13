@@ -46,22 +46,24 @@ export function markdownV2Chunks(text: string, maxChars: number): string[] {
     return [rendered];
   }
 
-  const chunks: string[] = [];
+  const renderedSegments: string[] = [];
   for (const segment of parseMarkdownSegments(text)) {
     if (segment.type === "text") {
-      chunks.push(...chunkEscapedText(escapeMarkdownV2Text(segment.text), maxChars));
+      renderedSegments.push(...chunkEscapedText(escapeMarkdownV2Text(segment.text), maxChars));
     } else if (segment.type === "bold") {
       const rendered = renderBold(segment.body);
-      chunks.push(...(rendered.length <= maxChars ? [rendered] : chunkEscapedText(escapeMarkdownV2Text(segment.body), maxChars)));
+      renderedSegments.push(
+        ...(rendered.length <= maxChars ? [rendered] : chunkEscapedText(escapeMarkdownV2Text(segment.body), maxChars)),
+      );
     } else if (segment.type === "inlineCode") {
       const rendered = renderInlineCode(segment.body);
-      chunks.push(...(rendered.length <= maxChars ? [rendered] : chunkCodeBlock(segment.body, "", maxChars)));
+      renderedSegments.push(...(rendered.length <= maxChars ? [rendered] : chunkCodeBlock(segment.body, "", maxChars)));
     } else {
-      chunks.push(...chunkCodeBlock(segment.body, segment.language, maxChars));
+      renderedSegments.push(...chunkCodeBlock(segment.body, segment.language, maxChars));
     }
   }
 
-  return chunks.filter((chunk) => chunk.trim().length > 0);
+  return packMarkdownChunks(renderedSegments, maxChars);
 }
 
 function renderMarkdownV2(text: string): string {
@@ -280,6 +282,35 @@ function endsWithDanglingEscape(text: string): boolean {
     slashCount += 1;
   }
   return slashCount % 2 === 1;
+}
+
+function packMarkdownChunks(segments: string[], maxChars: number): string[] {
+  const chunks: string[] = [];
+  let current = "";
+
+  for (const segment of segments) {
+    if (current.length > 0 && current.length + segment.length > maxChars) {
+      chunks.push(current);
+      current = "";
+    }
+
+    if (segment.length > maxChars) {
+      if (current.length > 0) {
+        chunks.push(current);
+        current = "";
+      }
+      chunks.push(segment);
+      continue;
+    }
+
+    current += segment;
+  }
+
+  if (current.trim()) {
+    chunks.push(current);
+  }
+
+  return chunks;
 }
 
 function chunkCodeBlock(body: string, language: string, maxChars: number): string[] {

@@ -18,6 +18,10 @@ Telegram should not forward every tiny `agent_message` event as its own message.
 
 Keep intermediate assistant prose visible, but batch consecutive short assistant messages before sending them. Substantial assistant messages should still send immediately. Tool/command/file-change messages may still be sent separately because they are operational progress, not prose chunks.
 
+## 2026-07-13: Pack Markdown Segments Before Sending
+
+Long assistant messages with many inline-code spans should be split by Telegram-safe size, not by individual Markdown segments. `markdownV2Chunks()` must pack rendered text, bold, inline-code, and code-block segments into full chunks before sending. Otherwise schema-like replies can become dozens of tiny bubbles such as one table name, dash, or field name per message.
+
 ## 2026-07-08: InglesConLiza Service Group Scope
 
 The `CODEX INGLESCONLIZA.COM` Telegram group should contain only InglesConLiza.com service repos and direct service dependencies.
