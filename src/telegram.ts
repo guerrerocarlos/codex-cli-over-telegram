@@ -2148,13 +2148,22 @@ export async function resumeInterruptedRuns(
         details: { runId: run.id, repoPath: freshBinding.repoPath },
       });
 
-      await sendText(
-        bot,
-        config,
-        freshBinding,
-        resumeNoticeText(run),
-        { notify: true },
-      );
+      try {
+        await sendText(
+          bot,
+          config,
+          freshBinding,
+          resumeNoticeText(run),
+          { notify: true },
+        );
+      } catch (error) {
+        logger.warn("failed to send restart resume notice", {
+          runId: run.id,
+          chatId: freshBinding.chatId,
+          messageThreadId: freshBinding.messageThreadId,
+          error: errorMessage(error),
+        });
+      }
       await executeRun(bot, config, storage, codex, { ...freshBinding, planMode: run.planMode }, run, resumePromptForRun(run));
     });
   }

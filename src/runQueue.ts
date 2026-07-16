@@ -1,3 +1,5 @@
+import { logger } from "./logger.js";
+
 export class RunQueue {
   private readonly chains = new Map<string, Promise<void>>();
   private readonly depths = new Map<string, number>();
@@ -20,6 +22,11 @@ export class RunQueue {
         await this.acquireGlobalSlot();
         try {
           await task();
+        } catch (error) {
+          logger.error("run queue task failed", {
+            key,
+            error: error instanceof Error ? error.stack ?? error.message : String(error),
+          });
         } finally {
           this.releaseGlobalSlot();
           const nextDepth = Math.max(0, this.depth(key) - 1);
