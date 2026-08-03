@@ -242,24 +242,29 @@ export class CodexAppServerBackend implements CodexBackend {
     if (request) {
       bridgeEnv.MANAGER_BRIDGE_CHAT_ID = String(request.chatId);
     }
+    const bridgeArgs = request?.restrictedToRepo
+      ? []
+      : [
+          "-c",
+          `mcp_servers.telegram_manager.command=${JSON.stringify(process.execPath)}`,
+          "-c",
+          `mcp_servers.telegram_manager.args=${JSON.stringify([this.managerBridgeMcpPath])}`,
+          "-c",
+          "mcp_servers.telegram_manager.default_tools_approval_mode=\"auto\"",
+          "-c",
+          "mcp_servers.telegram_manager.tools.queue_topic.approval_mode=\"auto\"",
+          "-c",
+          "mcp_servers.telegram_manager.tools.create_cron.approval_mode=\"auto\"",
+          "-c",
+          "mcp_servers.telegram_manager.tools.create_work_item.approval_mode=\"auto\"",
+          "-c",
+          "mcp_servers.telegram_manager.tools.update_work_item.approval_mode=\"auto\"",
+          "-c",
+          "mcp_servers.telegram_manager.tools.complete_work_item.approval_mode=\"auto\"",
+        ];
     return {
       extraArgs: [
-        "-c",
-        `mcp_servers.telegram_manager.command=${JSON.stringify(process.execPath)}`,
-        "-c",
-        `mcp_servers.telegram_manager.args=${JSON.stringify([this.managerBridgeMcpPath])}`,
-        "-c",
-        "mcp_servers.telegram_manager.default_tools_approval_mode=\"auto\"",
-        "-c",
-        "mcp_servers.telegram_manager.tools.queue_topic.approval_mode=\"auto\"",
-        "-c",
-        "mcp_servers.telegram_manager.tools.create_cron.approval_mode=\"auto\"",
-        "-c",
-        "mcp_servers.telegram_manager.tools.create_work_item.approval_mode=\"auto\"",
-        "-c",
-        "mcp_servers.telegram_manager.tools.update_work_item.approval_mode=\"auto\"",
-        "-c",
-        "mcp_servers.telegram_manager.tools.complete_work_item.approval_mode=\"auto\"",
+        ...bridgeArgs,
         ...codexProviderArgs(this.config, request?.modelProvider ?? this.config.defaultModelProvider),
         ...codexServiceTierArgs(
           request?.modelProvider === "openai" ? request.modelServiceTier : null,

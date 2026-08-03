@@ -7,6 +7,7 @@
 - Backend: Codex app-server by default
 - Telegram topic bindings and run state are stored in `data/state.sqlite`.
 - Dynamic Telegram chat/user allowlists are stored under `data/` and complement the static environment allowlists.
+- Topic bindings can opt into folder restriction with `/restrict on`; restricted runs ignore global YOLO, stay within the bound folder write boundary, and do not receive the Telegram manager MCP bridge.
 
 ## 2026-07-07 Check
 

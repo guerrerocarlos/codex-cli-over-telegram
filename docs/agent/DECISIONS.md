@@ -27,3 +27,11 @@ Long assistant messages with many inline-code spans should be split by Telegram-
 The `CODEX INGLESCONLIZA.COM` Telegram group should contain only InglesConLiza.com service repos and direct service dependencies.
 
 Use the current app/API/admin/auth/sync/drive/templates/mailer/media/meet/support/worker/public-blog surface. Do not add deprecated repos, experiments, empty placeholders, or generic marketing/content workspaces unless the scope changes explicitly.
+
+## 2026-08-03: Per-Topic Folder Restriction
+
+Some Telegram topics need a hard write boundary around the bound folder even when the service is globally configured with `CODEX_ALWAYS_YOLO=true`.
+
+Use `/restrict on` to persist `restricted_to_repo=1` on the topic binding. Restricted topics ignore global YOLO for run sandbox selection: read-only bindings stay `read-only`, and write-capable bindings run as `workspace-write` with the topic folder as the workspace. Restricted app-server runs also omit the `telegram_manager` MCP bridge, so the agent cannot indirectly queue work, create topics, or edit work items in other topics through that bridge.
+
+Use `/restrict off` to restore the normal `/mode` plus global YOLO behavior.

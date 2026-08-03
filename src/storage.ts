@@ -24,6 +24,7 @@ interface BindingRow {
   model_service_tier: string | null;
   plan_mode: number;
   sandbox_mode: SandboxMode;
+  restricted_to_repo: number;
   approval_policy: "never";
   status: string;
   token_usage_json: string | null;
@@ -198,6 +199,7 @@ function mapBinding(row: BindingRow): TopicBinding {
     modelServiceTier: row.model_service_tier,
     planMode: row.plan_mode === 1,
     sandboxMode: row.sandbox_mode,
+    restrictedToRepo: row.restricted_to_repo === 1,
     approvalPolicy: row.approval_policy,
     status: row.status,
     tokenUsage: parseTokenUsage(row.token_usage_json),
@@ -359,6 +361,7 @@ export class Storage {
         model_service_tier TEXT,
         plan_mode INTEGER NOT NULL DEFAULT 0,
         sandbox_mode TEXT NOT NULL DEFAULT 'read-only',
+        restricted_to_repo INTEGER NOT NULL DEFAULT 0,
         approval_policy TEXT NOT NULL DEFAULT 'never',
         status TEXT NOT NULL DEFAULT 'idle',
         created_by_user_id INTEGER NOT NULL,
@@ -488,6 +491,7 @@ export class Storage {
     this.addColumnIfMissing("topic_bindings", "model_service_tier", "TEXT");
     this.addColumnIfMissing("topic_bindings", "plan_mode", "INTEGER NOT NULL DEFAULT 0");
     this.addColumnIfMissing("topic_bindings", "token_usage_json", "TEXT");
+    this.addColumnIfMissing("topic_bindings", "restricted_to_repo", "INTEGER NOT NULL DEFAULT 0");
     this.addColumnIfMissing("runs", "plan_mode", "INTEGER NOT NULL DEFAULT 0");
   }
 
@@ -830,6 +834,12 @@ export class Storage {
     this.db
       .prepare("UPDATE topic_bindings SET sandbox_mode = ?, updated_at = ? WHERE id = ?")
       .run(sandboxMode, now(), bindingId);
+  }
+
+  updateBindingRestriction(bindingId: number, restrictedToRepo: boolean): void {
+    this.db
+      .prepare("UPDATE topic_bindings SET restricted_to_repo = ?, updated_at = ? WHERE id = ?")
+      .run(restrictedToRepo ? 1 : 0, now(), bindingId);
   }
 
   updateBindingModel(bindingId: number, model: string | null): void {

@@ -12,6 +12,17 @@ Expected production metadata fields:
 - `commitHash`
 - `deployedAt`
 
+## Per-Topic Folder Restriction
+
+Inside a bound Telegram topic:
+
+```text
+/restrict on
+/restrict off
+```
+
+`/restrict on` forces that topic to ignore `CODEX_ALWAYS_YOLO`, keeps read-only topics read-only, maps write-capable topics to `workspace-write`, and removes the Telegram manager MCP bridge from app-server runs. `/where` and `/status` show the current restriction state.
+
 ## Service Status
 
 ```bash

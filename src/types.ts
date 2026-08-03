@@ -16,6 +16,7 @@ export interface TopicBinding {
   modelServiceTier: string | null;
   planMode: boolean;
   sandboxMode: SandboxMode;
+  restrictedToRepo: boolean;
   approvalPolicy: "never";
   status: string;
   tokenUsage: ThreadTokenUsageSnapshot | null;
@@ -105,6 +106,7 @@ export interface CodexRunRequest {
   modelServiceTier: string | null;
   planMode: boolean;
   sandboxMode: SandboxMode;
+  restrictedToRepo: boolean;
   approvalPolicy: "never";
 }
 

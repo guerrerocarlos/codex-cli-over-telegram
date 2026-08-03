@@ -117,6 +117,8 @@ Useful commands:
 /planoff
 /mode read
 /mode write
+/restrict on
+/restrict off
 /status
 /stop
 /new
@@ -170,6 +172,8 @@ CODEX_ALWAYS_YOLO=true
 ```
 
 Restart Codex CLI over Telegram after changing it.
+
+Use `/restrict on` in a bound topic when that topic must stay inside its folder even if global YOLO mode is enabled. Restricted topics run with `read-only` or `workspace-write` only, using the topic folder as the write boundary, and app-server runs do not receive the Telegram manager MCP bridge. Use `/restrict off` to return the topic to the normal `/mode` plus global YOLO behavior.
 
 ## Run From A Clone
 
@@ -379,4 +383,4 @@ TELEGRAM_APPROVAL_MESSAGE_THREAD_ID=0
 ALLOWED_REPO_ROOTS=
 ```
 
-Only enable `CODEX_ALWAYS_YOLO=true` on a machine and Telegram group you fully trust.
+Only enable `CODEX_ALWAYS_YOLO=true` on a machine and Telegram group you fully trust. Topics with `/restrict on` override global YOLO for that topic and stay within the bound folder write boundary.

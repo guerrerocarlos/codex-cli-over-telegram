@@ -216,6 +216,7 @@ export function createTelegramBot(
           `Model:\n${codeBlock(await modelLabel(config, binding))}`,
           `Plan mode:\n${codeBlock(formatPlanMode(binding.planMode))}`,
           `Mode:\n${codeBlock(effectiveRunSandboxMode(config, binding))}`,
+          `Folder restriction:\n${codeBlock(formatFolderRestriction(binding))}`,
           isRepo ? null : "Git commands are unavailable until this path is initialized as a repo.",
           renameResult,
         ]
@@ -316,6 +317,7 @@ export function createTelegramBot(
         `Model:\n${codeBlock(await modelLabel(config, binding))}`,
         `Plan mode:\n${codeBlock(formatPlanMode(binding.planMode))}`,
         `Mode:\n${codeBlock(effectiveRunSandboxMode(config, binding))}`,
+        `Folder restriction:\n${codeBlock(formatFolderRestriction(binding))}`,
         `Codex session:\n${codeBlock(binding.codexThreadId ?? "(new)")}`,
         `Status:\n${codeBlock(binding.status)}`,
         "",
@@ -581,9 +583,44 @@ export function createTelegramBot(
     });
     await reply(
       ctx,
-      config.alwaysYoloMode
-        ? `Mode saved as ${mode}, but CODEX_ALWAYS_YOLO is enabled. Runs will use danger-full-access.`
-        : `Mode set to ${mode}.`,
+      binding.restrictedToRepo
+        ? `Mode saved as ${mode}. Folder restriction is enabled, so write-capable runs stay inside this topic folder.`
+        : config.alwaysYoloMode
+          ? `Mode saved as ${mode}, but CODEX_ALWAYS_YOLO is enabled. Runs will use danger-full-access.`
+          : `Mode set to ${mode}.`,
+      config,
+    );
+  });
+
+  bot.command("restrict", async (ctx) => {
+    const binding = await requireBinding(ctx, config, storage);
+    if (!binding) {
+      return;
+    }
+
+    const requested = parseRestrictionToggle(ctx.match.trim());
+    if (requested === null) {
+      await reply(ctx, "Usage: /restrict on or /restrict off", config);
+      return;
+    }
+
+    storage.updateBindingRestriction(binding.id, requested);
+    storage.audit({
+      telegramUserId: ctx.from?.id ?? null,
+      chatId: binding.chatId,
+      messageThreadId: binding.messageThreadId,
+      eventType: "restrict",
+      details: { restrictedToRepo: requested },
+    });
+    await reply(
+      ctx,
+      requested
+        ? [
+            "Folder restriction enabled.",
+            "",
+            "Runs in this topic will ignore CODEX_ALWAYS_YOLO, use the topic folder as the write boundary, and will not receive Telegram manager MCP tools.",
+          ].join("\n")
+        : "Folder restriction disabled. Runs will use the normal topic mode and global yolo setting.",
       config,
     );
   });
@@ -742,6 +779,7 @@ export function createTelegramBot(
           `Model:\n${codeBlock(await modelLabel(config, binding))}`,
           `Plan mode:\n${codeBlock(formatPlanMode(binding.planMode))}`,
           `Mode:\n${codeBlock(effectiveRunSandboxMode(config, binding))}`,
+          `Folder restriction:\n${codeBlock(formatFolderRestriction(binding))}`,
           `Context:\n${codeBlock(formatThreadTokenUsage(binding.tokenUsage))}`,
           usage,
         ].join("\n"),
@@ -755,6 +793,8 @@ export function createTelegramBot(
         `Run #${active.id} is ${active.status}.`,
         `Model:\n${codeBlock(await modelLabel(config, binding))}`,
         `Plan mode:\n${codeBlock(formatPlanMode(active.planMode))}`,
+        `Mode:\n${codeBlock(effectiveRunSandboxMode(config, binding))}`,
+        `Folder restriction:\n${codeBlock(formatFolderRestriction(binding))}`,
         `Context:\n${codeBlock(formatThreadTokenUsage(binding.tokenUsage))}`,
         `Prompt:\n${codeBlock(truncateText(active.prompt, 700))}`,
         usage,
@@ -2279,6 +2319,7 @@ async function executeRun(
       model: binding.model,
       modelServiceTier: binding.modelServiceTier,
       planMode: binding.planMode,
+      restrictedToRepo: binding.restrictedToRepo,
     })) {
       if (event.type === "started" && event.threadId) {
         storage.updateBindingThread(binding.id, event.threadId);
@@ -2876,12 +2917,30 @@ function parsePlanToggle(input: string): boolean | null {
   return null;
 }
 
+function parseRestrictionToggle(input: string): boolean | null {
+  const normalized = input.trim().toLowerCase();
+  if (["on", "true", "yes", "1", "restricted", "restrict"].includes(normalized)) {
+    return true;
+  }
+  if (["off", "false", "no", "0", "unrestricted"].includes(normalized)) {
+    return false;
+  }
+  return null;
+}
+
 function effectiveSandboxMode(config: AppConfig, sandboxMode: SandboxMode): SandboxMode {
   return config.alwaysYoloMode ? "danger-full-access" : sandboxMode;
 }
 
 function effectiveRunSandboxMode(config: AppConfig, binding: TopicBinding): SandboxMode {
+  if (binding.restrictedToRepo) {
+    return binding.sandboxMode === "read-only" ? "read-only" : "workspace-write";
+  }
   return effectiveSandboxMode(config, binding.sandboxMode);
+}
+
+function formatFolderRestriction(binding: TopicBinding): string {
+  return binding.restrictedToRepo ? "on" : "off";
 }
 
 function isWriteSandbox(sandboxMode: SandboxMode): boolean {
@@ -3367,6 +3426,8 @@ function helpText(): string {
     "/planoff - disable plan mode for ordinary prompts in this topic",
     "/mode read - use read-only Codex sandbox",
     "/mode write - allow Codex workspace edits",
+    "/restrict on - force runs to stay inside this topic folder",
+    "/restrict off - use the normal topic mode and global yolo setting",
     "/topic - rename this Telegram topic to the bound folder name",
     "/new - start a fresh agent thread with clean context",
     "/compact - compact this topic's Codex thread when using OpenAI",
@@ -3411,6 +3472,7 @@ export function telegramCommandMenu(): Array<{ command: string; description: str
     { command: "planon", description: "Enable topic plan mode" },
     { command: "planoff", description: "Disable topic plan mode" },
     { command: "mode", description: "Set read or write sandbox mode" },
+    { command: "restrict", description: "Restrict runs to topic folder" },
     { command: "topic", description: "Rename this Telegram topic" },
     { command: "new", description: "Start a fresh agent thread" },
     { command: "compact", description: "Compact OpenAI thread" },
