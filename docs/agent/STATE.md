@@ -8,6 +8,13 @@
 - Telegram topic bindings and run state are stored in `data/state.sqlite`.
 - Dynamic Telegram chat/user allowlists are stored under `data/` and complement the static environment allowlists.
 - Topic bindings can opt into folder restriction with `/restrict on`; restricted runs ignore global YOLO, stay within the bound folder write boundary, and do not receive the Telegram manager MCP bridge.
+- App-server runs forward `MANAGER_BRIDGE_URL`, `MANAGER_BRIDGE_TOKEN`, and `MANAGER_BRIDGE_CHAT_ID` into the `telegram_manager` MCP server via `env_vars`, so bridge tools stay scoped to the current Telegram chat.
+
+## 2026-08-08 W7S Topic Repair
+
+- User attempted to bootstrap `/home/gnu/account-w7s-io` from the W7S group.
+- The repo/deploy run completed, but the agent-reported topic creation failed because the `telegram_manager` MCP bridge did not receive the W7S chat id reliably.
+- Live repair created and bound topic `account-w7s-io` as topic `#2208` in chat `-1004477958494`.
 
 ## 2026-07-07 Check
 

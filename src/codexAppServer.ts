@@ -250,6 +250,12 @@ export class CodexAppServerBackend implements CodexBackend {
           "-c",
           `mcp_servers.telegram_manager.args=${JSON.stringify([this.managerBridgeMcpPath])}`,
           "-c",
+          `mcp_servers.telegram_manager.env_vars=${JSON.stringify([
+            "MANAGER_BRIDGE_URL",
+            "MANAGER_BRIDGE_TOKEN",
+            "MANAGER_BRIDGE_CHAT_ID",
+          ])}`,
+          "-c",
           "mcp_servers.telegram_manager.default_tools_approval_mode=\"auto\"",
           "-c",
           "mcp_servers.telegram_manager.tools.queue_topic.approval_mode=\"auto\"",

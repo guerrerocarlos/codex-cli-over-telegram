@@ -35,3 +35,9 @@ Some Telegram topics need a hard write boundary around the bound folder even whe
 Use `/restrict on` to persist `restricted_to_repo=1` on the topic binding. Restricted topics ignore global YOLO for run sandbox selection: read-only bindings stay `read-only`, and write-capable bindings run as `workspace-write` with the topic folder as the workspace. Restricted app-server runs also omit the `telegram_manager` MCP bridge, so the agent cannot indirectly queue work, create topics, or edit work items in other topics through that bridge.
 
 Use `/restrict off` to restore the normal `/mode` plus global YOLO behavior.
+
+## 2026-08-08: Forward Manager Bridge Env To MCP
+
+The app-server process injects `MANAGER_BRIDGE_URL`, `MANAGER_BRIDGE_TOKEN`, and `MANAGER_BRIDGE_CHAT_ID` per run. Codex stdio MCP servers do not reliably inherit arbitrary process environment unless the server config declares `env_vars`.
+
+The `telegram_manager` MCP config must include `env_vars = ["MANAGER_BRIDGE_URL", "MANAGER_BRIDGE_TOKEN", "MANAGER_BRIDGE_CHAT_ID"]` for each app-server run. This keeps `create_topic`, `list_topics`, and queue tools scoped to the current Telegram chat even if the agent changes directories into a newly created, not-yet-bound workspace.
