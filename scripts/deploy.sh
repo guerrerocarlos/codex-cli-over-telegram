@@ -84,8 +84,10 @@ fi
 sudo systemctl restart "$service_name"
 for attempt in {1..20}; do
   if health_response="$(curl -fsS "$health_url" 2>/dev/null)"; then
-    printf '%s\n' "$health_response"
-    exit 0
+    if node -e "const h=JSON.parse(process.argv[1]); process.exit(h.ok && h.telegramBotStarted ? 0 : 1)" "$health_response"; then
+      printf '%s\n' "$health_response"
+      exit 0
+    fi
   fi
   sleep 1
 done

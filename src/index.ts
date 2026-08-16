@@ -21,6 +21,7 @@ async function main(): Promise<void> {
       ? new CodexAppServerBackend(config)
       : new CodexExecBackend(config);
   const codex = new ProviderRouterBackend(openaiBackend, new GrokAcpBackend(config), new ClaudeAcpBackend(config));
+  const runtimeStatus = { telegramBotStarted: false };
   const healthServer = startHealthServer(config, async (request) =>
     handleTelegramBridgeRequest({
       storage,
@@ -30,6 +31,7 @@ async function main(): Promise<void> {
       queue,
       request,
     }),
+    () => runtimeStatus,
   );
   const bot = createTelegramBot(config, storage, codex, { queue });
   const cronScheduler = new CronScheduler({ storage, bot, config, codex, queue });
@@ -73,6 +75,7 @@ async function main(): Promise<void> {
   await bot.start({
     drop_pending_updates: true,
     onStart: (info) => {
+      runtimeStatus.telegramBotStarted = true;
       logger.info("telegram bot started", { botUsername: info.username });
       queueMicrotask(() => {
         void resumeInterruptedRuns(bot, config, storage, codex, queue, interruptedRuns);

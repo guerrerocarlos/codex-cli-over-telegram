@@ -1,5 +1,6 @@
 import { appendFileSync, mkdirSync } from "node:fs";
 import { mkdir, stat } from "node:fs/promises";
+import { Agent as HttpsAgent } from "node:https";
 import os from "node:os";
 import path from "node:path";
 import { Bot, InlineKeyboard, InputFile, type Context } from "grammy";
@@ -98,6 +99,7 @@ interface ContextFilePrompt {
 }
 
 const sendQueues = new WeakMap<AppConfig, TelegramSendQueue>();
+const telegramApiAgent = new HttpsAgent({ keepAlive: true, family: 4 });
 
 export function createTelegramBot(
   config: AppConfig,
@@ -105,7 +107,15 @@ export function createTelegramBot(
   codex: CodexBackend,
   options: CreateTelegramBotOptions = {},
 ): Bot {
-  const bot = new Bot(config.telegramBotToken);
+  const bot = new Bot(config.telegramBotToken, {
+    client: {
+      baseFetchConfig: {
+        compress: true,
+        agent: telegramApiAgent,
+      },
+      timeoutSeconds: 60,
+    },
+  });
   const queue = options.queue ?? new RunQueue(config.maxParallelRuns);
   const sendQueue = sendQueueFor(config);
 

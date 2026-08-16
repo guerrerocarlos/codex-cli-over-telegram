@@ -11,6 +11,9 @@ Expected production metadata fields:
 - `branch`
 - `commitHash`
 - `deployedAt`
+- `telegramBotStarted`
+
+The endpoint returns HTTP `503` until the Telegram bot has completed startup and long-polling is active. A response with only the HTTP health server up is not considered healthy.
 
 ## Per-Topic Folder Restriction
 
@@ -48,6 +51,8 @@ The production unit is the system service in `/etc/systemd/system/`. A disabled 
 ```bash
 systemctl start codex-cli-over-telegram-deploy.service
 ```
+
+The deploy script restarts the system unit and waits for `/health` to return `ok: true` with `telegramBotStarted: true`.
 
 ## Inspect Active Runs
 

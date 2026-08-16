@@ -5,11 +5,13 @@
 - Service: `codex-cli-over-telegram`
 - Workspace: `/home/gnu/codex-cli-over-telegram`
 - Backend: Codex app-server by default
+- Health readiness requires both the local HTTP health server and Telegram long-polling startup. `/health` returns HTTP `503` with `telegramBotStarted: false` while the process is not yet receiving Telegram updates.
 - Telegram topic bindings and run state are stored in `data/state.sqlite`.
 - Dynamic Telegram chat/user allowlists are stored under `data/` and complement the static environment allowlists.
 - Topic bindings can opt into folder restriction with `/restrict on`; restricted runs ignore global YOLO, stay within the bound folder write boundary, and do not receive the Telegram manager MCP bridge.
 - App-server runs forward `MANAGER_BRIDGE_URL`, `MANAGER_BRIDGE_TOKEN`, and `MANAGER_BRIDGE_CHAT_ID` into the `telegram_manager` MCP server via `env_vars`, so bridge tools stay scoped to the current Telegram chat.
 - Telegram outbound sends use bounded retries. Repeated transient send failures are logged and dropped so one failed message cannot block later bot replies forever.
+- The Telegram API client forces IPv4 for Bot API requests because this host can reach `api.telegram.org` over IPv4 while IPv6 can fail, which previously left the service half-started with only `/health` listening.
 
 ## 2026-08-08 W7S Topic Repair
 

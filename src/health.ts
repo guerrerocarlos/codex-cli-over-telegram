@@ -53,17 +53,29 @@ export interface BridgeResult {
 
 export type BridgeHandler = (request: BridgeRequest) => Promise<BridgeResult>;
 
-export function startHealthServer(config: AppConfig, bridgeHandler?: BridgeHandler): http.Server {
+export interface RuntimeStatus {
+  telegramBotStarted: boolean;
+}
+
+export type RuntimeStatusProvider = () => RuntimeStatus;
+
+export function startHealthServer(
+  config: AppConfig,
+  bridgeHandler?: BridgeHandler,
+  runtimeStatus: RuntimeStatusProvider = () => ({ telegramBotStarted: false }),
+): http.Server {
   const server = http.createServer((request, response) => {
     if (request.method === "GET" && request.url === "/health") {
-      response.writeHead(200, { "content-type": "application/json" });
+      const status = runtimeStatus();
+      response.writeHead(status.telegramBotStarted ? 200 : 503, { "content-type": "application/json" });
       response.end(
         JSON.stringify({
-          ok: true,
+          ok: status.telegramBotStarted,
           service: "codex-cli-over-telegram",
           branch: config.deployBranch,
           commitHash: config.deployCommitHash,
           deployedAt: config.deployedAt,
+          telegramBotStarted: status.telegramBotStarted,
         }),
       );
       return;
