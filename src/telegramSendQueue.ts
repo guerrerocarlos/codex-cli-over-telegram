@@ -5,6 +5,9 @@ type TelegramApi = Bot["api"];
 type SendMessageOptions = NonNullable<Parameters<TelegramApi["sendMessage"]>[2]>;
 type SendMessageResult = Awaited<ReturnType<TelegramApi["sendMessage"]>>;
 
+const MAX_TRANSIENT_SEND_FAILURES = 8;
+const MAX_RATE_LIMIT_FAILURES = 6;
+
 export class TelegramSendQueue {
   private queue: Promise<void> = Promise.resolve();
   private nextSendAt = 0;
@@ -16,7 +19,7 @@ export class TelegramSendQueue {
     chatId: number,
     text: string,
     options: SendMessageOptions,
-  ): Promise<SendMessageResult> {
+  ): Promise<SendMessageResult | null> {
     const task = this.queue.then(() => this.sendWithRetry(api, chatId, text, options));
     this.queue = task.then(
       () => undefined,
@@ -30,8 +33,9 @@ export class TelegramSendQueue {
     chatId: number,
     text: string,
     options: SendMessageOptions,
-  ): Promise<SendMessageResult> {
+  ): Promise<SendMessageResult | null> {
     let transientFailures = 0;
+    let rateLimitFailures = 0;
     let effectiveChatId = chatId;
     for (;;) {
       await this.waitForSlot();
@@ -50,6 +54,7 @@ export class TelegramSendQueue {
           });
           effectiveChatId = migrateToChatId;
           transientFailures = 0;
+          rateLimitFailures = 0;
           this.nextSendAt = Date.now() + this.intervalMs;
           continue;
         }
@@ -57,10 +62,27 @@ export class TelegramSendQueue {
         const retryAfterSeconds = telegramRetryAfterSeconds(error);
         if (retryAfterSeconds === null) {
           if (!isTransientTelegramSendError(error)) {
-            throw error;
+            logger.error("telegram send failed; dropping message", {
+              chatId: effectiveChatId,
+              messageThreadId: messageThreadId(options),
+              error: errorMessage(error),
+              textPreview: previewText(text),
+            });
+            return null;
           }
 
           transientFailures += 1;
+          if (transientFailures > MAX_TRANSIENT_SEND_FAILURES) {
+            logger.error("telegram send transient failure limit reached; dropping message", {
+              chatId: effectiveChatId,
+              messageThreadId: messageThreadId(options),
+              transientFailures,
+              error: errorMessage(error),
+              textPreview: previewText(text),
+            });
+            return null;
+          }
+
           const retryAfterMs = Math.min(30_000, 1000 * 2 ** Math.min(transientFailures, 5));
           this.nextSendAt = Date.now() + retryAfterMs;
           logger.warn("telegram send transient failure; retrying", {
@@ -70,7 +92,19 @@ export class TelegramSendQueue {
           continue;
         }
 
-        transientFailures = 0;
+        rateLimitFailures += 1;
+        if (rateLimitFailures > MAX_RATE_LIMIT_FAILURES) {
+          logger.error("telegram send rate limit retry limit reached; dropping message", {
+            chatId: effectiveChatId,
+            messageThreadId: messageThreadId(options),
+            rateLimitFailures,
+            retryAfterSeconds,
+            error: errorMessage(error),
+            textPreview: previewText(text),
+          });
+          return null;
+        }
+
         const retryAfterMs = (retryAfterSeconds + 1) * 1000;
         this.nextSendAt = Date.now() + retryAfterMs;
         logger.warn("telegram send rate limited; retrying", {
@@ -87,6 +121,16 @@ export class TelegramSendQueue {
       await sleep(waitMs);
     }
   }
+}
+
+function messageThreadId(options: SendMessageOptions): number | null {
+  const value = options.message_thread_id;
+  return typeof value === "number" ? value : null;
+}
+
+function previewText(text: string): string {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  return normalized.length > 220 ? `${normalized.slice(0, 217)}...` : normalized;
 }
 
 function telegramMigrateToChatId(error: unknown): number | null {

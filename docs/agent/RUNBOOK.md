@@ -137,3 +137,14 @@ console.log(JSON.stringify(db.prepare(`
 `).all(chatId), null, 2));
 NODE
 ```
+
+## Inspect Stuck Telegram Sends
+
+If messages appear stuck while runs are active, check for repeated send retries:
+
+```bash
+journalctl -u codex-cli-over-telegram.service --since '30 minutes ago' --no-pager -o short-iso \
+  | rg 'telegram send transient failure|telegram send failed|dropping message|telegram send rate limited'
+```
+
+The send queue now drops one outbound message after repeated transient or rate-limit failures, then continues with later messages. Dropped sends are logged with chat id, topic id, error, and a short text preview.

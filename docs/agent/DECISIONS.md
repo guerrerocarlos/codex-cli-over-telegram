@@ -41,3 +41,9 @@ Use `/restrict off` to restore the normal `/mode` plus global YOLO behavior.
 The app-server process injects `MANAGER_BRIDGE_URL`, `MANAGER_BRIDGE_TOKEN`, and `MANAGER_BRIDGE_CHAT_ID` per run. Codex stdio MCP servers do not reliably inherit arbitrary process environment unless the server config declares `env_vars`.
 
 The `telegram_manager` MCP config must include `env_vars = ["MANAGER_BRIDGE_URL", "MANAGER_BRIDGE_TOKEN", "MANAGER_BRIDGE_CHAT_ID"]` for each app-server run. This keeps `create_topic`, `list_topics`, and queue tools scoped to the current Telegram chat even if the agent changes directories into a newly created, not-yet-bound workspace.
+
+## 2026-08-16: Bound Telegram Send Retries
+
+Telegram send failures must not block the global bot send queue forever. A single `sendMessage` network failure previously retried without a limit, which could keep later messages and run completion notices stuck behind it.
+
+Transient send failures and repeated rate limits are now bounded. When the retry limit is reached, the bot logs the chat id, topic id, error, and a short message preview, drops that outbound message, and continues processing later sends.

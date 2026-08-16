@@ -9,6 +9,7 @@
 - Dynamic Telegram chat/user allowlists are stored under `data/` and complement the static environment allowlists.
 - Topic bindings can opt into folder restriction with `/restrict on`; restricted runs ignore global YOLO, stay within the bound folder write boundary, and do not receive the Telegram manager MCP bridge.
 - App-server runs forward `MANAGER_BRIDGE_URL`, `MANAGER_BRIDGE_TOKEN`, and `MANAGER_BRIDGE_CHAT_ID` into the `telegram_manager` MCP server via `env_vars`, so bridge tools stay scoped to the current Telegram chat.
+- Telegram outbound sends use bounded retries. Repeated transient send failures are logged and dropped so one failed message cannot block later bot replies forever.
 
 ## 2026-08-08 W7S Topic Repair
 
