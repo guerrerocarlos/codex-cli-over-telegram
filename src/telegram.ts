@@ -2721,6 +2721,9 @@ async function sendTextToTopic(
         : {}),
     } as const;
     const message = await sendQueueFor(config).sendMessage(bot.api, chatId, chunk, sendOptions);
+    if (!message) {
+      throw new Error("Telegram send queue dropped message after retry limit");
+    }
     if (index === 0 && message) {
       firstMessageId = message.message_id;
     }

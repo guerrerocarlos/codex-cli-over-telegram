@@ -152,4 +152,4 @@ journalctl -u codex-cli-over-telegram.service --since '30 minutes ago' --no-page
   | rg 'telegram send transient failure|telegram send failed|dropping message|telegram send rate limited'
 ```
 
-The send queue now drops one outbound message after repeated transient or rate-limit failures, then continues with later messages. Dropped sends are logged with chat id, topic id, error, and a short text preview.
+The send queue now drops one outbound message after repeated transient or rate-limit failures, then continues with later messages. Dropped sends are logged with chat id, topic id, error, and a short text preview. Run-output sends treat a dropped queue result as a delivery failure. If a run is marked completed but the user reports no visible reply, inspect the run `final_message` and the journal for dropped Telegram sends, then resend the saved final message after the transport is healthy.

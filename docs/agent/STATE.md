@@ -12,6 +12,7 @@
 - App-server runs forward `MANAGER_BRIDGE_URL`, `MANAGER_BRIDGE_TOKEN`, and `MANAGER_BRIDGE_CHAT_ID` into the `telegram_manager` MCP server via `env_vars`, so bridge tools stay scoped to the current Telegram chat.
 - Telegram outbound sends use bounded retries. Repeated transient send failures are logged and dropped so one failed message cannot block later bot replies forever.
 - The Telegram API client forces IPv4 for Bot API requests because this host can reach `api.telegram.org` over IPv4 while IPv6 can fail, which previously left the service half-started with only `/health` listening.
+- Source now treats dropped Telegram send-queue results as run-output delivery failures, so future deployments should not silently appear successful when the final reply was not accepted by Telegram. This source change was not live-deployed during the 2026-08-19 incident because authenticated Telegram Bot API calls from the host were timing out.
 
 ## 2026-08-08 W7S Topic Repair
 
