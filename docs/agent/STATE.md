@@ -6,6 +6,7 @@
 - Workspace: `/home/gnu/codex-cli-over-telegram`
 - Backend: Codex app-server by default
 - Health readiness requires both the local HTTP health server and Telegram long-polling startup. `/health` returns HTTP `503` with `telegramBotStarted: false` while the process is not yet receiving Telegram updates.
+- 2026-08-19 incident: after an operator-requested restart, the service process restarted but remained not Telegram-ready because authenticated Telegram Bot API calls such as `getMe` timed out from this host. `/health` correctly returned HTTP `503` with `telegramBotStarted: false`; do not treat the process as recovered until `getMe` and `/health` both succeed.
 - Telegram topic bindings and run state are stored in `data/state.sqlite`.
 - Dynamic Telegram chat/user allowlists are stored under `data/` and complement the static environment allowlists.
 - Topic bindings can opt into folder restriction with `/restrict on`; restricted runs ignore global YOLO, stay within the bound folder write boundary, and do not receive the Telegram manager MCP bridge.
