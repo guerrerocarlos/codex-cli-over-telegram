@@ -156,7 +156,7 @@ The send queue now drops one outbound message after repeated transient or rate-l
 
 ## Inspect Plugin Permission Approvals
 
-Codex app-server plugin permission requests should appear in the same bound Telegram topic as the active run. Use the inline buttons to approve or deny the request. Approval is scoped to the current turn.
+Codex app-server plugin permission requests should appear in the same bound Telegram topic as the active run. Use the inline buttons to approve for the current turn, approve for the current Codex session, or deny the request. The app-server protocol supports `turn` and `session` scopes, not a permanent forever scope.
 
 Recent approval requests and resolutions are audited in SQLite:
 

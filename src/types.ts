@@ -133,5 +133,5 @@ export interface CodexBackend {
   interrupt(bindingId: number): Promise<boolean>;
   steer?(bindingId: number, prompt: string): Promise<boolean>;
   compactThread?(threadId: string): Promise<void>;
-  resolvePermissionApproval?(approvalId: string, approved: boolean): boolean;
+  resolvePermissionApproval?(approvalId: string, scope: "turn" | "session" | "deny"): boolean;
 }

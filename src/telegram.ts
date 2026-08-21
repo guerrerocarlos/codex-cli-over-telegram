@@ -549,22 +549,22 @@ export function createTelegramBot(
     );
   });
 
-  bot.callbackQuery(/^perm:(allow|deny):[A-Za-z0-9_-]+$/, async (ctx) => {
+  bot.callbackQuery(/^perm:(turn|session|deny):[A-Za-z0-9_-]+$/, async (ctx) => {
     const fromId = ctx.from?.id;
     if (!fromId || !config.allowedTelegramUserIds.has(fromId)) {
       await ctx.answerCallbackQuery({ text: "Not authorized.", show_alert: true });
       return;
     }
 
-    const match = ctx.callbackQuery.data.match(/^perm:(allow|deny):(.+)$/);
-    const decision = match?.[1];
+    const match = ctx.callbackQuery.data.match(/^perm:(turn|session|deny):(.+)$/);
+    const scope = match?.[1] as "turn" | "session" | "deny" | undefined;
     const approvalId = match?.[2];
-    if (!decision || !approvalId || !codex.resolvePermissionApproval) {
+    if (!scope || !approvalId || !codex.resolvePermissionApproval) {
       await ctx.answerCallbackQuery({ text: "Permission approval is unavailable.", show_alert: true });
       return;
     }
 
-    const resolved = codex.resolvePermissionApproval(approvalId, decision === "allow");
+    const resolved = codex.resolvePermissionApproval(approvalId, scope);
     if (!resolved) {
       await ctx.answerCallbackQuery({ text: "This permission request is no longer pending.", show_alert: true });
       return;
@@ -576,7 +576,7 @@ export function createTelegramBot(
       chatId: topic?.chatId ?? ctx.callbackQuery.message?.chat.id ?? null,
       messageThreadId: topic?.messageThreadId ?? null,
       eventType: "permission_approval_resolved",
-      details: { approvalId, decision },
+      details: { approvalId, scope },
     });
 
     try {
@@ -585,10 +585,10 @@ export function createTelegramBot(
       logger.warn("failed to clear permission approval keyboard", { error: errorMessage(error) });
     }
 
-    await ctx.answerCallbackQuery({ text: decision === "allow" ? "Permission approved." : "Permission denied." });
+    await ctx.answerCallbackQuery({ text: permissionApprovalCallbackText(scope) });
     await reply(
       ctx,
-      decision === "allow" ? "Permission approved for this turn." : "Permission denied.",
+      permissionApprovalResultText(scope),
       config,
     );
   });
@@ -2754,7 +2754,9 @@ async function sendPermissionApprovalRequest(
   event: Extract<CodexRunEvent, { type: "permission_request" }>,
 ): Promise<void> {
   const keyboard = new InlineKeyboard()
-    .text("Approve for this turn", `perm:allow:${event.approvalId}`)
+    .text("Approve for this turn", `perm:turn:${event.approvalId}`)
+    .row()
+    .text("Approve for session", `perm:session:${event.approvalId}`)
     .row()
     .text("Deny", `perm:deny:${event.approvalId}`);
   const text = [
@@ -2917,6 +2919,26 @@ function permissionValuePreview(value: unknown): string {
     return `{ ${entries.map(([key, item]) => `${key}: ${permissionValuePreview(item)}`).join(", ")}${suffix} }`;
   }
   return String(value);
+}
+
+function permissionApprovalCallbackText(scope: "turn" | "session" | "deny"): string {
+  if (scope === "session") {
+    return "Permission approved for session.";
+  }
+  if (scope === "turn") {
+    return "Permission approved for this turn.";
+  }
+  return "Permission denied.";
+}
+
+function permissionApprovalResultText(scope: "turn" | "session" | "deny"): string {
+  if (scope === "session") {
+    return "Permission approved for this Codex session.";
+  }
+  if (scope === "turn") {
+    return "Permission approved for this turn.";
+  }
+  return "Permission denied.";
 }
 
 async function sendChatAction(bot: Bot, binding: TopicBinding): Promise<void> {

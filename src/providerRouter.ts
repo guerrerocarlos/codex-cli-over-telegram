@@ -39,8 +39,8 @@ export class ProviderRouterBackend implements CodexBackend {
     await this.openaiBackend.compactThread(threadId);
   }
 
-  resolvePermissionApproval(approvalId: string, approved: boolean): boolean {
-    return Boolean(this.openaiBackend.resolvePermissionApproval?.(approvalId, approved));
+  resolvePermissionApproval(approvalId: string, scope: "turn" | "session" | "deny"): boolean {
+    return Boolean(this.openaiBackend.resolvePermissionApproval?.(approvalId, scope));
   }
 
   private backendFor(request: CodexRunRequest): CodexBackend {

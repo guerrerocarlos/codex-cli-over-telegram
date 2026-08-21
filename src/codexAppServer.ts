@@ -246,7 +246,7 @@ export class CodexAppServerBackend implements CodexBackend {
     }
   }
 
-  resolvePermissionApproval(approvalId: string, approved: boolean): boolean {
+  resolvePermissionApproval(approvalId: string, scope: "turn" | "session" | "deny"): boolean {
     const pending = this.pendingPermissionApprovals.get(approvalId);
     if (!pending) {
       return false;
@@ -256,14 +256,14 @@ export class CodexAppServerBackend implements CodexBackend {
     this.pendingPermissionApprovals.delete(approvalId);
     pending.client.respond(
       pending.requestId,
-      approved
+      scope === "turn" || scope === "session"
         ? {
             permissions: grantedPermissionsFromRequest(pending.permissions),
-            scope: "turn",
+            scope,
           }
         : { permissions: {}, scope: "turn" },
     );
-    logger.info("resolved app-server permission approval", { approvalId, approved });
+    logger.info("resolved app-server permission approval", { approvalId, scope });
     return true;
   }
 

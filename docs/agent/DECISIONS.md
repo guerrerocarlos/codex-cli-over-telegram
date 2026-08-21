@@ -50,6 +50,6 @@ Transient send failures and repeated rate limits are now bounded. When the retry
 
 ## 2026-08-21: Surface App Permission Requests In Topic
 
-Codex app-server `item/permissions/requestApproval` requests should not be silently denied. Plugin permission requests, including Google Drive functionality installs, are now sent to the active bound Telegram topic with Approve and Deny inline buttons.
+Codex app-server `item/permissions/requestApproval` requests should not be silently denied. Plugin permission requests, including Google Drive functionality installs, are now sent to the active bound Telegram topic with Approve for this turn, Approve for session, and Deny inline buttons.
 
-Approving returns the requested permission profile with `scope: "turn"`. Denying or timing out returns an empty permission profile with `scope: "turn"`. This keeps plugin permission escalation visible to the topic while avoiding persistent grants from Telegram buttons.
+Turn approval returns the requested permission profile with `scope: "turn"`. Session approval returns it with `scope: "session"`, which is the longest app-server-supported permission grant. Denying or timing out returns an empty permission profile with `scope: "turn"`. This keeps plugin permission escalation visible to the topic while avoiding claims of permanent grants that the protocol does not support.
