@@ -47,3 +47,9 @@ The `telegram_manager` MCP config must include `env_vars = ["MANAGER_BRIDGE_URL"
 Telegram send failures must not block the global bot send queue forever. A single `sendMessage` network failure previously retried without a limit, which could keep later messages and run completion notices stuck behind it.
 
 Transient send failures and repeated rate limits are now bounded. When the retry limit is reached, the bot logs the chat id, topic id, error, and a short message preview, drops that outbound message, and continues processing later sends.
+
+## 2026-08-21: Surface App Permission Requests In Topic
+
+Codex app-server `item/permissions/requestApproval` requests should not be silently denied. Plugin permission requests, including Google Drive functionality installs, are now sent to the active bound Telegram topic with Approve and Deny inline buttons.
+
+Approving returns the requested permission profile with `scope: "turn"`. Denying or timing out returns an empty permission profile with `scope: "turn"`. This keeps plugin permission escalation visible to the topic while avoiding persistent grants from Telegram buttons.

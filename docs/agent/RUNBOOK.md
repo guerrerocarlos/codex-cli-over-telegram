@@ -153,3 +153,23 @@ journalctl -u codex-cli-over-telegram.service --since '30 minutes ago' --no-page
 ```
 
 The send queue now drops one outbound message after repeated transient or rate-limit failures, then continues with later messages. Dropped sends are logged with chat id, topic id, error, and a short text preview. Run-output sends treat a dropped queue result as a delivery failure. If a run is marked completed but the user reports no visible reply, inspect the run `final_message` and the journal for dropped Telegram sends, then resend the saved final message after the transport is healthy.
+
+## Inspect Plugin Permission Approvals
+
+Codex app-server plugin permission requests should appear in the same bound Telegram topic as the active run. Use the inline buttons to approve or deny the request. Approval is scoped to the current turn.
+
+Recent approval requests and resolutions are audited in SQLite:
+
+```bash
+node - <<'NODE'
+const Database = require('better-sqlite3');
+const db = new Database('data/state.sqlite', { readonly: true });
+console.log(JSON.stringify(db.prepare(`
+  SELECT timestamp, chat_id, message_thread_id, event_type, details_json
+  FROM audit_events
+  WHERE event_type IN ('permission_approval_requested', 'permission_approval_resolved')
+  ORDER BY id DESC
+  LIMIT 20
+`).all(), null, 2));
+NODE
+```

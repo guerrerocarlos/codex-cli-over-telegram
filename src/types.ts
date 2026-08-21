@@ -113,6 +113,12 @@ export interface CodexRunRequest {
 export type CodexRunEvent =
   | { type: "started"; threadId?: string; text?: string }
   | { type: "token_usage"; tokenUsage: ThreadTokenUsageSnapshot }
+  | {
+      type: "permission_request";
+      approvalId: string;
+      reason: string | null;
+      permissions: unknown;
+    }
   | { type: "progress"; text: string }
   | { type: "command_started"; text: string }
   | { type: "command_completed"; text: string }
@@ -127,4 +133,5 @@ export interface CodexBackend {
   interrupt(bindingId: number): Promise<boolean>;
   steer?(bindingId: number, prompt: string): Promise<boolean>;
   compactThread?(threadId: string): Promise<void>;
+  resolvePermissionApproval?(approvalId: string, approved: boolean): boolean;
 }

@@ -1,4 +1,5 @@
 import path from "node:path";
+import { randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { AppServerClient } from "./appServerClient.js";
 import { AsyncQueue } from "./asyncQueue.js";
@@ -25,6 +26,13 @@ interface ActiveTurn {
   turnId: string;
 }
 
+interface PendingPermissionApproval {
+  client: AppServerClient;
+  requestId: number | string;
+  permissions: unknown;
+  timeout: NodeJS.Timeout;
+}
+
 interface RpcThreadResponse {
   thread?: {
     id?: string;
@@ -44,6 +52,7 @@ interface Notification {
 
 export class CodexAppServerBackend implements CodexBackend {
   private readonly active = new Map<number, ActiveTurn>();
+  private readonly pendingPermissionApprovals = new Map<string, PendingPermissionApproval>();
   private readonly managerBridgeMcpPath = path.join(
     path.dirname(fileURLToPath(import.meta.url)),
     "managerBridgeMcp.js",
@@ -59,6 +68,11 @@ export class CodexAppServerBackend implements CodexBackend {
     let turnId: string | null = null;
 
     client.onServerRequest((serverRequest, rpcClient) => {
+      if (serverRequest.method === "item/permissions/requestApproval") {
+        this.requestPermissionApproval(serverRequest.id, serverRequest.params, rpcClient, events);
+        return;
+      }
+
       events.push({
         type: "progress",
         text:
@@ -230,6 +244,68 @@ export class CodexAppServerBackend implements CodexBackend {
     } finally {
       client.close();
     }
+  }
+
+  resolvePermissionApproval(approvalId: string, approved: boolean): boolean {
+    const pending = this.pendingPermissionApprovals.get(approvalId);
+    if (!pending) {
+      return false;
+    }
+
+    clearTimeout(pending.timeout);
+    this.pendingPermissionApprovals.delete(approvalId);
+    pending.client.respond(
+      pending.requestId,
+      approved
+        ? {
+            permissions: grantedPermissionsFromRequest(pending.permissions),
+            scope: "turn",
+          }
+        : { permissions: {}, scope: "turn" },
+    );
+    logger.info("resolved app-server permission approval", { approvalId, approved });
+    return true;
+  }
+
+  private requestPermissionApproval(
+    requestId: number | string,
+    params: any,
+    client: AppServerClient,
+    events: AsyncQueue<CodexRunEvent>,
+  ): void {
+    const approvalId = randomBytes(9).toString("base64url");
+    const permissions = params?.permissions ?? {};
+    const timeout = setTimeout(() => {
+      if (!this.pendingPermissionApprovals.delete(approvalId)) {
+        return;
+      }
+      client.respond(requestId, { permissions: {}, scope: "turn" });
+      events.push({
+        type: "progress",
+        text: "Permission approval timed out and was denied.",
+      });
+      logger.warn("app-server permission approval timed out", { approvalId });
+    }, 10 * 60_000);
+    timeout.unref();
+
+    this.pendingPermissionApprovals.set(approvalId, {
+      client,
+      requestId,
+      permissions,
+      timeout,
+    });
+
+    events.push({
+      type: "permission_request",
+      approvalId,
+      reason: typeof params?.reason === "string" && params.reason.trim() ? params.reason : null,
+      permissions,
+    });
+    logger.info("app-server permission approval requested", {
+      approvalId,
+      reason: typeof params?.reason === "string" ? params.reason : null,
+      permissionKeys: permissionKeys(permissions),
+    });
   }
 
   private appServerOptions(request?: CodexRunRequest): { extraArgs: string[]; extraEnv: NodeJS.ProcessEnv } {
@@ -490,4 +566,28 @@ export class CodexAppServerBackend implements CodexBackend {
     }
     client.respondError(id, `Unsupported app-server request: ${method}`);
   }
+}
+
+function grantedPermissionsFromRequest(permissions: any): Record<string, unknown> {
+  if (!permissions || typeof permissions !== "object") {
+    return {};
+  }
+
+  const granted: Record<string, unknown> = {};
+  if (permissions.network) {
+    granted.network = permissions.network;
+  }
+  if (permissions.fileSystem) {
+    granted.fileSystem = permissions.fileSystem;
+  }
+  return granted;
+}
+
+function permissionKeys(permissions: any): string[] {
+  if (!permissions || typeof permissions !== "object") {
+    return [];
+  }
+  return Object.entries(permissions)
+    .filter(([, value]) => Boolean(value))
+    .map(([key]) => key);
 }

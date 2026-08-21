@@ -549,6 +549,50 @@ export function createTelegramBot(
     );
   });
 
+  bot.callbackQuery(/^perm:(allow|deny):[A-Za-z0-9_-]+$/, async (ctx) => {
+    const fromId = ctx.from?.id;
+    if (!fromId || !config.allowedTelegramUserIds.has(fromId)) {
+      await ctx.answerCallbackQuery({ text: "Not authorized.", show_alert: true });
+      return;
+    }
+
+    const match = ctx.callbackQuery.data.match(/^perm:(allow|deny):(.+)$/);
+    const decision = match?.[1];
+    const approvalId = match?.[2];
+    if (!decision || !approvalId || !codex.resolvePermissionApproval) {
+      await ctx.answerCallbackQuery({ text: "Permission approval is unavailable.", show_alert: true });
+      return;
+    }
+
+    const resolved = codex.resolvePermissionApproval(approvalId, decision === "allow");
+    if (!resolved) {
+      await ctx.answerCallbackQuery({ text: "This permission request is no longer pending.", show_alert: true });
+      return;
+    }
+
+    const topic = getTopicRef(ctx, config);
+    storage.audit({
+      telegramUserId: fromId,
+      chatId: topic?.chatId ?? ctx.callbackQuery.message?.chat.id ?? null,
+      messageThreadId: topic?.messageThreadId ?? null,
+      eventType: "permission_approval_resolved",
+      details: { approvalId, decision },
+    });
+
+    try {
+      await ctx.editMessageReplyMarkup();
+    } catch (error) {
+      logger.warn("failed to clear permission approval keyboard", { error: errorMessage(error) });
+    }
+
+    await ctx.answerCallbackQuery({ text: decision === "allow" ? "Permission approved." : "Permission denied." });
+    await reply(
+      ctx,
+      decision === "allow" ? "Permission approved for this turn." : "Permission denied.",
+      config,
+    );
+  });
+
   bot.command("plan", async (ctx) => {
     const text = ctx.match.trim();
     if (!text) {
@@ -2398,6 +2442,12 @@ async function executeRun(
         continue;
       }
 
+      if (event.type === "permission_request") {
+        await flushAgentMessagesBeforeProgress();
+        await sendPermissionApprovalRequest(bot, config, storage, binding, run, event);
+        continue;
+      }
+
       if (event.type === "progress") {
         const nowMs = Date.now();
         if (nowMs - lastProgressAt > 20_000) {
@@ -2695,6 +2745,103 @@ async function sendText(
   return sendTextToTopic(bot, config, binding.chatId, binding.messageThreadId, text, options);
 }
 
+async function sendPermissionApprovalRequest(
+  bot: Bot,
+  config: AppConfig,
+  storage: Storage,
+  binding: TopicBinding,
+  run: RunRecord,
+  event: Extract<CodexRunEvent, { type: "permission_request" }>,
+): Promise<void> {
+  const keyboard = new InlineKeyboard()
+    .text("Approve for this turn", `perm:allow:${event.approvalId}`)
+    .row()
+    .text("Deny", `perm:deny:${event.approvalId}`);
+  const text = [
+    "Permission requested.",
+    "",
+    event.reason ? `Reason:\n${codeBlock(truncateText(event.reason, 700))}` : null,
+    `Requested permissions:\n${codeBlock(describePermissionRequest(event.permissions))}`,
+    "",
+    `Run: #${run.id}`,
+  ]
+    .filter((line): line is string => line !== null)
+    .join("\n");
+
+  await sendTextToTopicWithKeyboard(
+    bot,
+    config,
+    binding.chatId,
+    binding.messageThreadId,
+    text,
+    keyboard,
+    terminalRunSendOptions(run),
+  );
+
+  storage.audit({
+    telegramUserId: null,
+    chatId: binding.chatId,
+    messageThreadId: binding.messageThreadId,
+    eventType: "permission_approval_requested",
+    details: {
+      approvalId: event.approvalId,
+      runId: run.id,
+      permissionSummary: describePermissionRequest(event.permissions),
+    },
+  });
+}
+
+async function sendTextToTopicWithKeyboard(
+  bot: Bot,
+  config: AppConfig,
+  chatId: number,
+  messageThreadId: number,
+  text: string,
+  keyboard: InlineKeyboard,
+  options: SendOptions = {},
+): Promise<number | null> {
+  const chunks = markdownV2Chunks(text, config.maxTelegramMessageChars);
+  let firstMessageId: number | null = null;
+  const [first, ...rest] = chunks;
+  if (!first) {
+    return null;
+  }
+
+  const firstMessage = await sendQueueFor(config).sendMessage(bot.api, chatId, first, {
+    link_preview_options: { is_disabled: true },
+    parse_mode: "MarkdownV2",
+    disable_notification: options.notify !== true,
+    ...(messageThreadId > 0 ? { message_thread_id: messageThreadId } : {}),
+    ...(options.replyToMessageId
+      ? {
+          reply_parameters: {
+            message_id: options.replyToMessageId,
+            allow_sending_without_reply: true,
+          },
+        }
+      : {}),
+    reply_markup: keyboard,
+  });
+  if (!firstMessage) {
+    throw new Error("Telegram send queue dropped permission approval message after retry limit");
+  }
+  firstMessageId = firstMessage.message_id;
+
+  for (const chunk of rest) {
+    const message = await sendQueueFor(config).sendMessage(bot.api, chatId, chunk, {
+      link_preview_options: { is_disabled: true },
+      parse_mode: "MarkdownV2",
+      disable_notification: true,
+      ...(messageThreadId > 0 ? { message_thread_id: messageThreadId } : {}),
+    });
+    if (!message) {
+      throw new Error("Telegram send queue dropped permission approval follow-up after retry limit");
+    }
+  }
+
+  return firstMessageId;
+}
+
 async function sendTextToTopic(
   bot: Bot,
   config: AppConfig,
@@ -2729,6 +2876,47 @@ async function sendTextToTopic(
     }
   }
   return firstMessageId;
+}
+
+function describePermissionRequest(permissions: unknown): string {
+  if (!permissions || typeof permissions !== "object") {
+    return "No permission details were provided.";
+  }
+
+  const record = permissions as Record<string, unknown>;
+  const lines = [
+    describePermissionSection("network", record.network),
+    describePermissionSection("fileSystem", record.fileSystem),
+  ].filter(Boolean);
+  return truncateText(lines.length > 0 ? lines.join("\n") : JSON.stringify(record, null, 2), 1400);
+}
+
+function describePermissionSection(label: string, value: unknown): string | null {
+  if (!value) {
+    return null;
+  }
+  if (typeof value !== "object") {
+    return `${label}: ${String(value)}`;
+  }
+
+  const record = value as Record<string, unknown>;
+  const parts = Object.entries(record)
+    .filter(([, item]) => item !== null && item !== undefined)
+    .map(([key, item]) => `${key}: ${permissionValuePreview(item)}`);
+  return parts.length > 0 ? `${label}: ${parts.join("; ")}` : `${label}: requested`;
+}
+
+function permissionValuePreview(value: unknown): string {
+  if (Array.isArray(value)) {
+    const sample = value.slice(0, 5).map((item) => permissionValuePreview(item));
+    return `${sample.join(", ")}${value.length > sample.length ? ` (+${value.length - sample.length} more)` : ""}`;
+  }
+  if (value && typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>).slice(0, 4);
+    const suffix = Object.keys(value as Record<string, unknown>).length > entries.length ? ", ..." : "";
+    return `{ ${entries.map(([key, item]) => `${key}: ${permissionValuePreview(item)}`).join(", ")}${suffix} }`;
+  }
+  return String(value);
 }
 
 async function sendChatAction(bot: Bot, binding: TopicBinding): Promise<void> {
