@@ -15,6 +15,7 @@
 - The Telegram API client forces IPv4 for Bot API requests because this host can reach `api.telegram.org` over IPv4 while IPv6 can fail, which previously left the service half-started with only `/health` listening.
 - Source now treats dropped Telegram send-queue results as run-output delivery failures, so future deployments should not silently appear successful when the final reply was not accepted by Telegram. This source change was not live-deployed during the 2026-08-19 incident because authenticated Telegram Bot API calls from the host were timing out.
 - Codex app-server plugin permission requests, such as installing Google Drive functionality, are surfaced in the run's bound Telegram topic with Approve for this turn, Approve for session, and Deny buttons. Session approval is the longest app-server-supported permission scope.
+- Codex app-server MCP app approval elicitations are also surfaced in the active Telegram topic. This is the path used by app and connector prompts such as Google Drive install/connect approvals.
 
 ## 2026-08-08 W7S Topic Repair
 

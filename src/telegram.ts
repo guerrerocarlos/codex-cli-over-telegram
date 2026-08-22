@@ -593,6 +593,46 @@ export function createTelegramBot(
     );
   });
 
+  bot.callbackQuery(/^elicit:(turn|session|deny):[A-Za-z0-9_-]+$/, async (ctx) => {
+    const fromId = ctx.from?.id;
+    if (!fromId || !config.allowedTelegramUserIds.has(fromId)) {
+      await ctx.answerCallbackQuery({ text: "Not authorized.", show_alert: true });
+      return;
+    }
+
+    const match = ctx.callbackQuery.data.match(/^elicit:(turn|session|deny):(.+)$/);
+    const scope = match?.[1] as "turn" | "session" | "deny" | undefined;
+    const approvalId = match?.[2];
+    if (!scope || !approvalId || !codex.resolveElicitationApproval) {
+      await ctx.answerCallbackQuery({ text: "App approval is unavailable.", show_alert: true });
+      return;
+    }
+
+    const resolved = codex.resolveElicitationApproval(approvalId, scope);
+    if (!resolved) {
+      await ctx.answerCallbackQuery({ text: "This app approval is no longer pending.", show_alert: true });
+      return;
+    }
+
+    const topic = getTopicRef(ctx, config);
+    storage.audit({
+      telegramUserId: fromId,
+      chatId: topic?.chatId ?? ctx.callbackQuery.message?.chat.id ?? null,
+      messageThreadId: topic?.messageThreadId ?? null,
+      eventType: "elicitation_approval_resolved",
+      details: { approvalId, scope },
+    });
+
+    try {
+      await ctx.editMessageReplyMarkup();
+    } catch (error) {
+      logger.warn("failed to clear app approval keyboard", { error: errorMessage(error) });
+    }
+
+    await ctx.answerCallbackQuery({ text: appApprovalCallbackText(scope) });
+    await reply(ctx, appApprovalResultText(scope), config);
+  });
+
   bot.command("plan", async (ctx) => {
     const text = ctx.match.trim();
     if (!text) {
@@ -2448,6 +2488,12 @@ async function executeRun(
         continue;
       }
 
+      if (event.type === "elicitation_request") {
+        await flushAgentMessagesBeforeProgress();
+        await sendElicitationApprovalRequest(bot, config, storage, binding, run, event);
+        continue;
+      }
+
       if (event.type === "progress") {
         const nowMs = Date.now();
         if (nowMs - lastProgressAt > 20_000) {
@@ -2793,6 +2839,52 @@ async function sendPermissionApprovalRequest(
   });
 }
 
+async function sendElicitationApprovalRequest(
+  bot: Bot,
+  config: AppConfig,
+  storage: Storage,
+  binding: TopicBinding,
+  run: RunRecord,
+  event: Extract<CodexRunEvent, { type: "elicitation_request" }>,
+): Promise<void> {
+  const keyboard = new InlineKeyboard()
+    .text("Approve once", `elicit:turn:${event.approvalId}`)
+    .row()
+    .text("Approve for session", `elicit:session:${event.approvalId}`)
+    .row()
+    .text("Deny", `elicit:deny:${event.approvalId}`);
+  const text = [
+    "App approval requested.",
+    "",
+    `Request:\n${codeBlock(truncateText(event.title, 700))}`,
+    `Details:\n${codeBlock(truncateText(event.description, 1400))}`,
+    "",
+    `Run: #${run.id}`,
+  ].join("\n");
+
+  await sendTextToTopicWithKeyboard(
+    bot,
+    config,
+    binding.chatId,
+    binding.messageThreadId,
+    text,
+    keyboard,
+    terminalRunSendOptions(run),
+  );
+
+  storage.audit({
+    telegramUserId: null,
+    chatId: binding.chatId,
+    messageThreadId: binding.messageThreadId,
+    eventType: "elicitation_approval_requested",
+    details: {
+      approvalId: event.approvalId,
+      runId: run.id,
+      title: event.title,
+    },
+  });
+}
+
 async function sendTextToTopicWithKeyboard(
   bot: Bot,
   config: AppConfig,
@@ -2939,6 +3031,26 @@ function permissionApprovalResultText(scope: "turn" | "session" | "deny"): strin
     return "Permission approved for this turn.";
   }
   return "Permission denied.";
+}
+
+function appApprovalCallbackText(scope: "turn" | "session" | "deny"): string {
+  if (scope === "session") {
+    return "App approval granted for session.";
+  }
+  if (scope === "turn") {
+    return "App approval granted once.";
+  }
+  return "App approval denied.";
+}
+
+function appApprovalResultText(scope: "turn" | "session" | "deny"): string {
+  if (scope === "session") {
+    return "App approval granted for this Codex session.";
+  }
+  if (scope === "turn") {
+    return "App approval granted once.";
+  }
+  return "App approval denied.";
 }
 
 async function sendChatAction(bot: Bot, binding: TopicBinding): Promise<void> {

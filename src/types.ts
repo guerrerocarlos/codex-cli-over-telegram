@@ -119,6 +119,12 @@ export type CodexRunEvent =
       reason: string | null;
       permissions: unknown;
     }
+  | {
+      type: "elicitation_request";
+      approvalId: string;
+      title: string;
+      description: string;
+    }
   | { type: "progress"; text: string }
   | { type: "command_started"; text: string }
   | { type: "command_completed"; text: string }
@@ -134,4 +140,5 @@ export interface CodexBackend {
   steer?(bindingId: number, prompt: string): Promise<boolean>;
   compactThread?(threadId: string): Promise<void>;
   resolvePermissionApproval?(approvalId: string, scope: "turn" | "session" | "deny"): boolean;
+  resolveElicitationApproval?(approvalId: string, scope: "turn" | "session" | "deny"): boolean;
 }

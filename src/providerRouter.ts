@@ -43,6 +43,10 @@ export class ProviderRouterBackend implements CodexBackend {
     return Boolean(this.openaiBackend.resolvePermissionApproval?.(approvalId, scope));
   }
 
+  resolveElicitationApproval(approvalId: string, scope: "turn" | "session" | "deny"): boolean {
+    return Boolean(this.openaiBackend.resolveElicitationApproval?.(approvalId, scope));
+  }
+
   private backendFor(request: CodexRunRequest): CodexBackend {
     if (request.modelProvider === "xai") {
       return this.xaiBackend;

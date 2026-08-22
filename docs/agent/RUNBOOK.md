@@ -154,9 +154,11 @@ journalctl -u codex-cli-over-telegram.service --since '30 minutes ago' --no-page
 
 The send queue now drops one outbound message after repeated transient or rate-limit failures, then continues with later messages. Dropped sends are logged with chat id, topic id, error, and a short text preview. Run-output sends treat a dropped queue result as a delivery failure. If a run is marked completed but the user reports no visible reply, inspect the run `final_message` and the journal for dropped Telegram sends, then resend the saved final message after the transport is healthy.
 
-## Inspect Plugin Permission Approvals
+## Inspect Plugin And App Approvals
 
 Codex app-server plugin permission requests should appear in the same bound Telegram topic as the active run. Use the inline buttons to approve for the current turn, approve for the current Codex session, or deny the request. The app-server protocol supports `turn` and `session` scopes, not a permanent forever scope.
+
+App and connector install/connect prompts can arrive as `mcpServer/elicitation/request`, not only `item/permissions/requestApproval`. These should also appear in the active Telegram topic as app approval requests.
 
 Recent approval requests and resolutions are audited in SQLite:
 
@@ -167,9 +169,21 @@ const db = new Database('data/state.sqlite', { readonly: true });
 console.log(JSON.stringify(db.prepare(`
   SELECT timestamp, chat_id, message_thread_id, event_type, details_json
   FROM audit_events
-  WHERE event_type IN ('permission_approval_requested', 'permission_approval_resolved')
+  WHERE event_type IN (
+    'permission_approval_requested',
+    'permission_approval_resolved',
+    'elicitation_approval_requested',
+    'elicitation_approval_resolved'
+  )
   ORDER BY id DESC
   LIMIT 20
 `).all(), null, 2));
 NODE
+```
+
+If a connector approval does not show, inspect logs for declined app-server requests:
+
+```bash
+journalctl -u codex-cli-over-telegram.service --since '30 minutes ago' --no-pager -o short-iso \
+  | rg 'mcpServer/elicitation/request|app-server elicitation approval requested|declining app-server request'
 ```

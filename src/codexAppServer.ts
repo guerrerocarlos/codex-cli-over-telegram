@@ -33,6 +33,13 @@ interface PendingPermissionApproval {
   timeout: NodeJS.Timeout;
 }
 
+interface PendingElicitationApproval {
+  client: AppServerClient;
+  requestId: number | string;
+  params: any;
+  timeout: NodeJS.Timeout;
+}
+
 interface RpcThreadResponse {
   thread?: {
     id?: string;
@@ -53,6 +60,7 @@ interface Notification {
 export class CodexAppServerBackend implements CodexBackend {
   private readonly active = new Map<number, ActiveTurn>();
   private readonly pendingPermissionApprovals = new Map<string, PendingPermissionApproval>();
+  private readonly pendingElicitationApprovals = new Map<string, PendingElicitationApproval>();
   private readonly managerBridgeMcpPath = path.join(
     path.dirname(fileURLToPath(import.meta.url)),
     "managerBridgeMcp.js",
@@ -70,6 +78,13 @@ export class CodexAppServerBackend implements CodexBackend {
     client.onServerRequest((serverRequest, rpcClient) => {
       if (serverRequest.method === "item/permissions/requestApproval") {
         this.requestPermissionApproval(serverRequest.id, serverRequest.params, rpcClient, events);
+        return;
+      }
+      if (
+        serverRequest.method === "mcpServer/elicitation/request" &&
+        (serverRequest.params as any)?.serverName !== "telegram_manager"
+      ) {
+        this.requestElicitationApproval(serverRequest.id, serverRequest.params, rpcClient, events);
         return;
       }
 
@@ -267,6 +282,19 @@ export class CodexAppServerBackend implements CodexBackend {
     return true;
   }
 
+  resolveElicitationApproval(approvalId: string, scope: "turn" | "session" | "deny"): boolean {
+    const pending = this.pendingElicitationApprovals.get(approvalId);
+    if (!pending) {
+      return false;
+    }
+
+    clearTimeout(pending.timeout);
+    this.pendingElicitationApprovals.delete(approvalId);
+    pending.client.respond(pending.requestId, buildElicitationResponse(pending.params, scope));
+    logger.info("resolved app-server elicitation approval", { approvalId, scope });
+    return true;
+  }
+
   private requestPermissionApproval(
     requestId: number | string,
     params: any,
@@ -305,6 +333,48 @@ export class CodexAppServerBackend implements CodexBackend {
       approvalId,
       reason: typeof params?.reason === "string" ? params.reason : null,
       permissionKeys: permissionKeys(permissions),
+    });
+  }
+
+  private requestElicitationApproval(
+    requestId: number | string,
+    params: any,
+    client: AppServerClient,
+    events: AsyncQueue<CodexRunEvent>,
+  ): void {
+    const approvalId = randomBytes(9).toString("base64url");
+    const timeout = setTimeout(() => {
+      if (!this.pendingElicitationApprovals.delete(approvalId)) {
+        return;
+      }
+      client.respond(requestId, { action: "decline", content: null, _meta: null });
+      events.push({
+        type: "progress",
+        text: "App approval timed out and was denied.",
+      });
+      logger.warn("app-server elicitation approval timed out", { approvalId });
+    }, 10 * 60_000);
+    timeout.unref();
+
+    this.pendingElicitationApprovals.set(approvalId, {
+      client,
+      requestId,
+      params,
+      timeout,
+    });
+
+    const title = elicitationTitle(params);
+    events.push({
+      type: "elicitation_request",
+      approvalId,
+      title,
+      description: describeElicitationRequest(params),
+    });
+    logger.info("app-server elicitation approval requested", {
+      approvalId,
+      serverName: typeof params?.serverName === "string" ? params.serverName : null,
+      mode: typeof params?.mode === "string" ? params.mode : null,
+      title,
     });
   }
 
@@ -568,6 +638,112 @@ export class CodexAppServerBackend implements CodexBackend {
   }
 }
 
+function buildElicitationResponse(params: any, scope: "turn" | "session" | "deny"): Record<string, unknown> {
+  if (scope === "deny") {
+    return { action: "decline", content: null, _meta: null };
+  }
+
+  const content = buildElicitationContent(params, scope);
+  if (content === undefined) {
+    return { action: "decline", content: null, _meta: null };
+  }
+
+  return {
+    action: "accept",
+    content,
+    _meta: scope === "session" ? buildElicitationAcceptedMeta(params) : null,
+  };
+}
+
+function buildElicitationContent(params: any, scope: "turn" | "session"): Record<string, unknown> | null | undefined {
+  if (params?.mode === "url") {
+    return null;
+  }
+
+  const properties = params?.requestedSchema?.properties;
+  if (!properties || typeof properties !== "object") {
+    return undefined;
+  }
+  const entries = Object.entries(properties);
+  if (entries.length === 0) {
+    return null;
+  }
+
+  const required = new Set(
+    Array.isArray(params?.requestedSchema?.required)
+      ? params.requestedSchema.required.filter((entry: unknown): entry is string => typeof entry === "string")
+      : [],
+  );
+  const content: Record<string, unknown> = {};
+  let sawApprovalField = false;
+
+  for (const [name, rawSchema] of entries) {
+    const schema = rawSchema && typeof rawSchema === "object" ? (rawSchema as Record<string, unknown>) : null;
+    if (!schema) {
+      continue;
+    }
+
+    const value =
+      approvalFieldValue(name, schema, scope) ??
+      persistFieldValue(name, schema, params?._meta, scope) ??
+      schema.default;
+    if (value === undefined) {
+      if (required.has(name)) {
+        return undefined;
+      }
+      continue;
+    }
+
+    if (isApprovalFieldName(name, schema)) {
+      sawApprovalField = true;
+    }
+    content[name] = value;
+  }
+
+  return sawApprovalField ? content : undefined;
+}
+
+function approvalFieldValue(name: string, schema: Record<string, unknown>, scope: "turn" | "session"): unknown {
+  if (!isApprovalFieldName(name, schema)) {
+    return undefined;
+  }
+  if (schema.type === "boolean") {
+    return true;
+  }
+  const options = enumOptions(schema);
+  const sessionChoice = options.find((option) => /session|always|forever/i.test(option.label));
+  const acceptChoice = options.find((option) => /approve|allow|accept|yes/i.test(option.label));
+  if (scope === "session") {
+    return sessionChoice?.value ?? acceptChoice?.value;
+  }
+  return acceptChoice?.value ?? sessionChoice?.value;
+}
+
+function persistFieldValue(
+  name: string,
+  schema: Record<string, unknown>,
+  meta: unknown,
+  scope: "turn" | "session",
+): unknown {
+  if (scope !== "session" || !isPersistFieldName(name, schema)) {
+    return undefined;
+  }
+  const options = enumOptions(schema);
+  const hints = persistHints(meta);
+  for (const hint of hints) {
+    const match = options.find((option) => option.value === hint || option.label === hint);
+    if (match) {
+      return match.value;
+    }
+  }
+  return undefined;
+}
+
+function buildElicitationAcceptedMeta(params: any): Record<string, unknown> | null {
+  const [persist] = persistHints(params?._meta);
+  return persist ? { persist } : null;
+}
+
 function grantedPermissionsFromRequest(permissions: any): Record<string, unknown> {
   if (!permissions || typeof permissions !== "object") {
     return {};
@@ -590,4 +766,122 @@ function permissionKeys(permissions: any): string[] {
   return Object.entries(permissions)
     .filter(([, value]) => Boolean(value))
     .map(([key]) => key);
+}
+
+function elicitationTitle(params: any): string {
+  const message = stringValue(params?.message);
+  const connectorName = stringValue(params?._meta?.connector_name);
+  const toolTitle = stringValue(params?._meta?.tool_title);
+  if (connectorName && toolTitle) {
+    return `${connectorName}: ${toolTitle}`;
+  }
+  return message || "App approval requested";
+}
+
+function describeElicitationRequest(params: any): string {
+  const lines = [
+    stringValue(params?.message),
+    stringValue(params?._meta?.connector_name) ? `App: ${stringValue(params._meta.connector_name)}` : null,
+    stringValue(params?._meta?.tool_title) ? `Tool: ${stringValue(params._meta.tool_title)}` : null,
+    stringValue(params?.serverName) ? `MCP server: ${stringValue(params.serverName)}` : null,
+    stringValue(params?._meta?.tool_description),
+    params?.mode === "url" && stringValue(params?.url) ? `URL: ${stringValue(params.url)}` : null,
+    displayParams(params?._meta?.tool_params_display),
+    schemaFields(params?.requestedSchema),
+  ].filter((line): line is string => Boolean(line));
+  return lines.length > 0 ? lines.join("\n") : "No app approval details were provided.";
+}
+
+function displayParams(value: unknown): string | null {
+  if (!Array.isArray(value) || value.length === 0) {
+    return null;
+  }
+  const lines = value.slice(0, 8).map((entry) => {
+    const record = entry && typeof entry === "object" ? (entry as Record<string, unknown>) : null;
+    if (!record) {
+      return null;
+    }
+    const name = stringValue(record.display_name) ?? stringValue(record.name);
+    if (!name) {
+      return null;
+    }
+    return `- ${name}: ${previewJson(record.value)}`;
+  }).filter((line): line is string => Boolean(line));
+  return lines.length > 0 ? ["Parameters:", ...lines].join("\n") : null;
+}
+
+function schemaFields(schema: unknown): string | null {
+  const properties = schema && typeof schema === "object" ? (schema as any).properties : null;
+  if (!properties || typeof properties !== "object") {
+    return null;
+  }
+  const lines = Object.entries(properties).map(([name, rawSchema]) => {
+    const propertySchema = rawSchema && typeof rawSchema === "object" ? (rawSchema as Record<string, unknown>) : null;
+    if (!propertySchema) {
+      return null;
+    }
+    const title = stringValue(propertySchema.title) ?? name;
+    const description = stringValue(propertySchema.description);
+    return description ? `- ${title}: ${description}` : `- ${title}`;
+  }).filter((line): line is string => Boolean(line));
+  return lines.length > 0 ? ["Fields:", ...lines].join("\n") : null;
+}
+
+function previewJson(value: unknown): string {
+  const text = typeof value === "string" ? value : JSON.stringify(value);
+  return text && text.length > 120 ? `${text.slice(0, 117)}...` : text ?? "null";
+}
+
+function stringValue(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function enumOptions(schema: Record<string, unknown>): Array<{ value: string; label: string }> {
+  const fromEnum = Array.isArray(schema.enum)
+    ? schema.enum
+        .filter((entry): entry is string => typeof entry === "string")
+        .map((entry) => ({ value: entry, label: entry }))
+    : [];
+  const titled = [...oneOfOptions(schema.oneOf), ...oneOfOptions((schema.items as any)?.oneOf), ...oneOfOptions(schema.anyOf)];
+  return [...fromEnum, ...titled];
+}
+
+function oneOfOptions(value: unknown): Array<{ value: string; label: string }> {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.flatMap((entry) => {
+    const record = entry && typeof entry === "object" ? (entry as Record<string, unknown>) : null;
+    const optionValue = stringValue(record?.const);
+    if (!optionValue) {
+      return [];
+    }
+    return [{ value: optionValue, label: stringValue(record?.title) ?? optionValue }];
+  });
+}
+
+function isApprovalFieldName(name: string, schema: Record<string, unknown>): boolean {
+  return fieldHaystack(name, schema).match(/\b(approve|approval|allow|accept|decision)\b/i) !== null;
+}
+
+function isPersistFieldName(name: string, schema: Record<string, unknown>): boolean {
+  return fieldHaystack(name, schema).match(/\b(persist|session|always|scope)\b/i) !== null;
+}
+
+function fieldHaystack(name: string, schema: Record<string, unknown>): string {
+  return [name, stringValue(schema.title), stringValue(schema.description)].filter(Boolean).join(" ");
+}
+
+function persistHints(meta: unknown): Array<"always" | "session"> {
+  const raw = meta && typeof meta === "object" ? (meta as Record<string, unknown>).persist : null;
+  const values =
+    typeof raw === "string"
+      ? [raw]
+      : Array.isArray(raw)
+        ? raw.filter((entry): entry is string => typeof entry === "string")
+        : ["session", "always"];
+  return [
+    ...(values.includes("always") ? ["always" as const] : []),
+    ...(values.includes("session") ? ["session" as const] : []),
+  ];
 }
