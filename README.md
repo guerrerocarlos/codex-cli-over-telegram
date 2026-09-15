@@ -155,6 +155,8 @@ The bot publishes its slash-command menu to Telegram on startup, so newly added 
 
 Images, documents, audio, video, and other Telegram files are saved into the bound repository's `.context/` directory using the original filename when Telegram provides one, then sent to Codex as local paths only once there is text to act on. Uploads with captions start a run immediately and use the caption as the instruction. Uploads without captions are staged for the next text message or captioned upload in that topic. A caption starting with `/ask` is also supported.
 
+When Codex creates or changes image files in the bound repository, the bot sends those images back to the same Telegram topic after the run completes. JPEG, PNG, and WebP files are sent as photos when Telegram accepts them; other image formats such as GIF, SVG, TIFF, AVIF, HEIC, and oversized images are sent as documents.
+
 Voice messages are saved into `.context/`, converted with `ffmpeg` when Telegram sends an OpenAI-unsupported audio container, transcribed with the OpenAI API, saved as a `.transcript.txt` file, and then sent to Codex as the user's prompt. Set `OPENAI_API_KEY` before using voice transcription.
 
 The bot pins the message that triggers each run and leaves the latest prompt pinned after completion so the task remains easy to find.
@@ -172,6 +174,18 @@ CODEX_ALWAYS_YOLO=true
 ```
 
 Restart Codex CLI over Telegram after changing it.
+
+For a trusted WSL2 container where the bot's Codex sessions should also be able to use passwordless `sudo` and restart the system service themselves, run:
+
+```bash
+sudo ./scripts/enable-trusted-wsl-access.sh
+```
+
+This sets `CODEX_ALWAYS_YOLO=true`, changes the systemd unit to allow privilege escalation instead of `NoNewPrivileges=true`, removes the strict read-only system mount restriction, grants passwordless sudo to the service user, reloads systemd, and restarts the bot. Future deploys can preserve the same relaxed systemd unit by running:
+
+```bash
+TRUSTED_WSL_FULL_ACCESS=true ./scripts/deploy.sh
+```
 
 Use `/restrict on` in a bound topic when that topic must stay inside its folder even if global YOLO mode is enabled. Restricted topics run with `read-only` or `workspace-write` only, using the topic folder as the write boundary, and app-server runs do not receive the Telegram manager MCP bridge. Use `/restrict off` to return the topic to the normal `/mode` plus global YOLO behavior.
 

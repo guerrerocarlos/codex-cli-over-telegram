@@ -576,7 +576,8 @@ export class CodexAppServerBackend implements CodexBackend {
       return text ? { type: "command_completed", text } : null;
     }
     if (item.type === "fileChange") {
-      return { type: "file_changed", text: this.describeFileChange(item) };
+      const paths = fileChangePaths(item);
+      return { type: "file_changed", text: describeFileChangePaths(paths), paths };
     }
     if (item.type === "mcpToolCall") {
       return { type: "progress", text: `MCP tool ${item.server}.${item.tool} ${item.status ?? "completed"}` };
@@ -594,16 +595,6 @@ export class CodexAppServerBackend implements CodexBackend {
       }
     }
     return undefined;
-  }
-
-  private describeFileChange(item: any): string {
-    if (!Array.isArray(item.changes) || item.changes.length === 0) {
-      return "File changes completed.";
-    }
-    const paths = item.changes
-      .map((change: any) => change.path ?? change.movePath?.newPath ?? change.movePath?.oldPath)
-      .filter(Boolean);
-    return paths.length > 0 ? `Changed ${paths.join(", ")}` : "File changes completed.";
   }
 
   private declineServerRequest(method: string, id: number | string, params: any, client: AppServerClient): void {
@@ -636,6 +627,20 @@ export class CodexAppServerBackend implements CodexBackend {
     }
     client.respondError(id, `Unsupported app-server request: ${method}`);
   }
+}
+
+function fileChangePaths(item: any): string[] {
+  if (!Array.isArray(item.changes)) {
+    return [];
+  }
+
+  return item.changes
+    .map((change: any) => change.path ?? change.movePath?.newPath ?? change.movePath?.oldPath)
+    .filter((value: unknown): value is string => typeof value === "string" && value.length > 0);
+}
+
+function describeFileChangePaths(paths: string[]): string {
+  return paths.length > 0 ? `Changed ${paths.join(", ")}` : "File changes completed.";
 }
 
 function buildElicitationResponse(params: any, scope: "turn" | "session" | "deny"): Record<string, unknown> {

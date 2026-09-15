@@ -2342,6 +2342,19 @@ function terminalRunSendOptions(run: RunRecord): SendOptions {
 const agentMessageBatchMinChars = 600;
 const agentMessageBatchMaxChars = 1200;
 const agentMessageBatchMaxCount = 4;
+const telegramPhotoMaxBytes = 10 * 1024 * 1024;
+const telegramPhotoExtensions = new Set([".jpg", ".jpeg", ".png", ".webp"]);
+const telegramImageExtensions = new Set([
+  ...telegramPhotoExtensions,
+  ".gif",
+  ".bmp",
+  ".tif",
+  ".tiff",
+  ".svg",
+  ".avif",
+  ".heic",
+  ".heif",
+]);
 
 async function executeRun(
   bot: Bot,
@@ -2358,6 +2371,7 @@ async function executeRun(
   const pendingAgentMessages: string[] = [];
   let lastProgressAt = 0;
   let richStreamer: TelegramRichDraftStreamer | null = null;
+  const changedImagePaths = new Set<string>();
 
   const flushAgentMessages = async (options: SendOptions = {}): Promise<void> => {
     const text = pendingAgentMessages.join("\n\n").trim();
@@ -2478,6 +2492,12 @@ async function executeRun(
 
       if (event.type === "file_changed") {
         await flushAgentMessagesBeforeProgress();
+        for (const changedPath of event.paths ?? [event.text]) {
+          const imagePath = resolveGeneratedImagePath(binding.repoPath, changedPath);
+          if (imagePath) {
+            changedImagePaths.add(imagePath);
+          }
+        }
         await sendText(bot, config, binding, `Changed:\n${codeBlock(event.text)}`);
         continue;
       }
@@ -2538,6 +2558,7 @@ async function executeRun(
         terminalRunSendOptions(run),
       );
     }
+    await sendGeneratedImages(bot, config, binding, run, changedImagePaths);
   } catch (error) {
     const message = errorMessage(error);
     storage.failRun(run.id, message);
@@ -2551,6 +2572,83 @@ async function executeRun(
     }
     storage.updateBindingStatus(binding.id, "idle");
   }
+}
+
+async function sendGeneratedImages(
+  bot: Bot,
+  config: AppConfig,
+  binding: TopicBinding,
+  run: RunRecord,
+  imagePaths: Set<string>,
+): Promise<void> {
+  const sendQueue = sendQueueFor(config);
+  for (const imagePath of imagePaths) {
+    const file = await generatedImageFile(imagePath);
+    if (!file) {
+      continue;
+    }
+
+    const relativePath = path.relative(binding.repoPath, imagePath);
+    const caption = truncateText(`Generated image: ${relativePath}`, 1024);
+    const options = {
+      message_thread_id: binding.messageThreadId,
+      caption,
+      disable_notification: false,
+      ...(run.telegramMessageId
+        ? {
+            reply_parameters: {
+              message_id: run.telegramMessageId,
+              allow_sending_without_reply: true,
+            },
+          }
+        : {}),
+    };
+    const inputFile = new InputFile(imagePath);
+
+    if (telegramPhotoExtensions.has(file.extension) && file.size <= telegramPhotoMaxBytes) {
+      const sent = await sendQueue.sendPhoto(bot.api, binding.chatId, inputFile, options, imagePath);
+      if (sent) {
+        continue;
+      }
+    }
+
+    await sendQueue.sendDocument(bot.api, binding.chatId, new InputFile(imagePath), options, imagePath);
+  }
+}
+
+async function generatedImageFile(imagePath: string): Promise<{ extension: string; size: number } | null> {
+  const extension = path.extname(imagePath).toLowerCase();
+  if (!telegramImageExtensions.has(extension)) {
+    return null;
+  }
+
+  try {
+    const fileStat = await stat(imagePath);
+    if (!fileStat.isFile() || fileStat.size <= 0) {
+      return null;
+    }
+    return { extension, size: fileStat.size };
+  } catch (error) {
+    if (isNodeError(error) && error.code === "ENOENT") {
+      return null;
+    }
+    throw error;
+  }
+}
+
+function resolveGeneratedImagePath(repoPath: string, changedPath: string): string | null {
+  const trimmed = changedPath.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const resolvedPath = path.resolve(repoPath, trimmed);
+  const relativePath = path.relative(repoPath, resolvedPath);
+  if (relativePath.startsWith("..") || path.isAbsolute(relativePath)) {
+    return null;
+  }
+
+  return telegramImageExtensions.has(path.extname(resolvedPath).toLowerCase()) ? resolvedPath : null;
 }
 
 function supportsTelegramRichDraft(binding: TopicBinding): boolean {
@@ -3839,6 +3937,10 @@ function errorMessage(error: unknown): string {
     return [error.message, maybe.stderr, maybe.stdout].filter(Boolean).join("\n");
   }
   return String(error);
+}
+
+function isNodeError(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error && "code" in error;
 }
 
 function resolveNewWorkspacePath(requestedFolder: string, allowedRoots: string[]): string {

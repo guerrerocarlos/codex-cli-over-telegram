@@ -200,7 +200,7 @@ export class CodexExecBackend implements CodexBackend {
     }
 
     if (event.type === "item.completed" && item.type === "file_change" && item.path) {
-      return { type: "file_changed", text: item.path };
+      return { type: "file_changed", text: item.path, paths: [item.path] };
     }
 
     if (item.text && event.type?.startsWith("item.")) {

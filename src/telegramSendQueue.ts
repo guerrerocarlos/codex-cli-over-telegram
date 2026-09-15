@@ -4,6 +4,12 @@ import { logger } from "./logger.js";
 type TelegramApi = Bot["api"];
 type SendMessageOptions = NonNullable<Parameters<TelegramApi["sendMessage"]>[2]>;
 type SendMessageResult = Awaited<ReturnType<TelegramApi["sendMessage"]>>;
+type SendPhotoFile = Parameters<TelegramApi["sendPhoto"]>[1];
+type SendPhotoOptions = NonNullable<Parameters<TelegramApi["sendPhoto"]>[2]>;
+type SendPhotoResult = Awaited<ReturnType<TelegramApi["sendPhoto"]>>;
+type SendDocumentFile = Parameters<TelegramApi["sendDocument"]>[1];
+type SendDocumentOptions = NonNullable<Parameters<TelegramApi["sendDocument"]>[2]>;
+type SendDocumentResult = Awaited<ReturnType<TelegramApi["sendDocument"]>>;
 
 const MAX_TRANSIENT_SEND_FAILURES = 8;
 const MAX_RATE_LIMIT_FAILURES = 6;
@@ -20,7 +26,48 @@ export class TelegramSendQueue {
     text: string,
     options: SendMessageOptions,
   ): Promise<SendMessageResult | null> {
-    const task = this.queue.then(() => this.sendWithRetry(api, chatId, text, options));
+    const task = this.queue.then(() =>
+      this.sendWithRetry((effectiveChatId) => api.sendMessage(effectiveChatId, text, options), chatId, options, text),
+    );
+    this.queue = task.then(
+      () => undefined,
+      () => undefined,
+    );
+    return task;
+  }
+
+  sendPhoto(
+    api: TelegramApi,
+    chatId: number,
+    photo: SendPhotoFile,
+    options: SendPhotoOptions,
+    preview: string,
+  ): Promise<SendPhotoResult | null> {
+    const task = this.queue.then(() =>
+      this.sendWithRetry((effectiveChatId) => api.sendPhoto(effectiveChatId, photo, options), chatId, options, preview),
+    );
+    this.queue = task.then(
+      () => undefined,
+      () => undefined,
+    );
+    return task;
+  }
+
+  sendDocument(
+    api: TelegramApi,
+    chatId: number,
+    document: SendDocumentFile,
+    options: SendDocumentOptions,
+    preview: string,
+  ): Promise<SendDocumentResult | null> {
+    const task = this.queue.then(() =>
+      this.sendWithRetry(
+        (effectiveChatId) => api.sendDocument(effectiveChatId, document, options),
+        chatId,
+        options,
+        preview,
+      ),
+    );
     this.queue = task.then(
       () => undefined,
       () => undefined,
@@ -29,11 +76,11 @@ export class TelegramSendQueue {
   }
 
   private async sendWithRetry(
-    api: TelegramApi,
+    send: (chatId: number) => Promise<unknown>,
     chatId: number,
-    text: string,
-    options: SendMessageOptions,
-  ): Promise<SendMessageResult | null> {
+    options: SendMessageOptions | SendPhotoOptions | SendDocumentOptions,
+    preview: string,
+  ): Promise<any | null> {
     let transientFailures = 0;
     let rateLimitFailures = 0;
     let effectiveChatId = chatId;
@@ -41,7 +88,7 @@ export class TelegramSendQueue {
       await this.waitForSlot();
 
       try {
-        const message = await api.sendMessage(effectiveChatId, text, options);
+        const message = await send(effectiveChatId);
         this.nextSendAt = Date.now() + this.intervalMs;
         return message;
       } catch (error) {
@@ -66,7 +113,7 @@ export class TelegramSendQueue {
               chatId: effectiveChatId,
               messageThreadId: messageThreadId(options),
               error: errorMessage(error),
-              textPreview: previewText(text),
+              textPreview: previewText(preview),
             });
             return null;
           }
@@ -78,7 +125,7 @@ export class TelegramSendQueue {
               messageThreadId: messageThreadId(options),
               transientFailures,
               error: errorMessage(error),
-              textPreview: previewText(text),
+              textPreview: previewText(preview),
             });
             return null;
           }
@@ -100,7 +147,7 @@ export class TelegramSendQueue {
             rateLimitFailures,
             retryAfterSeconds,
             error: errorMessage(error),
-            textPreview: previewText(text),
+            textPreview: previewText(preview),
           });
           return null;
         }

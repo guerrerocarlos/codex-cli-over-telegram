@@ -13,6 +13,7 @@ unit_source="${UNIT_SOURCE:-deploy/systemd/codex-cli-over-telegram.service}"
 unit_path="/etc/systemd/system/$service_name.service"
 service_home="$(getent passwd "$service_user" | cut -d: -f6)"
 read_write_paths="${READ_WRITE_PATHS:-$service_home}"
+trusted_wsl_full_access="${TRUSTED_WSL_FULL_ACCESS:-false}"
 source_dir="$(pwd -P)"
 app_dir_real="$app_dir"
 if [ -d "$app_dir" ]; then
@@ -69,6 +70,15 @@ sudo sed -i \
   -e "s|^ExecStart=.*|ExecStart=/usr/bin/node $app_dir/dist/index.js|" \
   -e "s|^ReadWritePaths=.*|ReadWritePaths=$read_write_paths|" \
   "$unit_path"
+
+if [ "$trusted_wsl_full_access" = "true" ]; then
+  sudo sed -i \
+    -e "s|^NoNewPrivileges=.*|NoNewPrivileges=false|" \
+    -e "s|^PrivateTmp=.*|PrivateTmp=false|" \
+    -e "s|^ProtectSystem=.*|ProtectSystem=false|" \
+    -e "/^ReadWritePaths=/d" \
+    "$unit_path"
+fi
 sudo systemctl daemon-reload
 
 if [ "$source_dir" != "$app_dir_real" ]; then
