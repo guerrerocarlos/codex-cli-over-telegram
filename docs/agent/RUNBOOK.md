@@ -72,6 +72,18 @@ console.log(JSON.stringify(db.prepare(`
 NODE
 ```
 
+## Inspect Generated Images
+
+Codex image generation may create files in the global cache instead of the bound repo:
+
+```bash
+find ~/.codex/generated_images -type f \
+  \( -iname '*.png' -o -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.webp' \) \
+  -printf '%TY-%Tm-%Td %TH:%TM:%TS %s %p\n' | sort | tail -n 40
+```
+
+If a Telegram topic says images were shown but Telegram did not receive them, compare the run's Codex thread id with the cache subdirectory under `~/.codex/generated_images/`.
+
 ## Inspect Chat Migration Failures
 
 ```bash

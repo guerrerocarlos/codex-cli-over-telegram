@@ -1,5 +1,5 @@
-import { appendFileSync, mkdirSync } from "node:fs";
-import { mkdir, stat } from "node:fs/promises";
+import { appendFileSync, mkdirSync, type Dirent } from "node:fs";
+import { mkdir, readdir, stat } from "node:fs/promises";
 import { Agent as HttpsAgent } from "node:https";
 import os from "node:os";
 import path from "node:path";
@@ -2372,6 +2372,9 @@ async function executeRun(
   let lastProgressAt = 0;
   let richStreamer: TelegramRichDraftStreamer | null = null;
   const changedImagePaths = new Set<string>();
+  let runCodexThreadId = binding.codexThreadId;
+  let codexGeneratedImagesBeforeRun = new Set<string>();
+  let runStartedAtMs = Date.now();
 
   const flushAgentMessages = async (options: SendOptions = {}): Promise<void> => {
     const text = pendingAgentMessages.join("\n\n").trim();
@@ -2388,6 +2391,8 @@ async function executeRun(
   };
 
   try {
+    codexGeneratedImagesBeforeRun = await snapshotCodexGeneratedImages(runCodexThreadId);
+    runStartedAtMs = Date.now();
     const sandboxMode = effectiveRunSandboxMode(config, binding);
 
     if (isWriteSandbox(sandboxMode)) {
@@ -2430,6 +2435,7 @@ async function executeRun(
       restrictedToRepo: binding.restrictedToRepo,
     })) {
       if (event.type === "started" && event.threadId) {
+        runCodexThreadId = event.threadId;
         storage.updateBindingThread(binding.id, event.threadId);
         storage.updateRunCodexId(run.id, event.threadId);
         continue;
@@ -2558,6 +2564,9 @@ async function executeRun(
         terminalRunSendOptions(run),
       );
     }
+    for (const imagePath of await codexGeneratedImagesAfterRun(codexGeneratedImagesBeforeRun, runStartedAtMs, runCodexThreadId)) {
+      changedImagePaths.add(imagePath);
+    }
     await sendGeneratedImages(bot, config, binding, run, changedImagePaths);
   } catch (error) {
     const message = errorMessage(error);
@@ -2588,8 +2597,7 @@ async function sendGeneratedImages(
       continue;
     }
 
-    const relativePath = path.relative(binding.repoPath, imagePath);
-    const caption = truncateText(`Generated image: ${relativePath}`, 1024);
+    const caption = truncateText(`Generated image: ${displayGeneratedImagePath(binding.repoPath, imagePath)}`, 1024);
     const options = {
       message_thread_id: binding.messageThreadId,
       caption,
@@ -2616,7 +2624,7 @@ async function sendGeneratedImages(
   }
 }
 
-async function generatedImageFile(imagePath: string): Promise<{ extension: string; size: number } | null> {
+async function generatedImageFile(imagePath: string): Promise<{ extension: string; size: number; mtimeMs: number } | null> {
   const extension = path.extname(imagePath).toLowerCase();
   if (!telegramImageExtensions.has(extension)) {
     return null;
@@ -2627,7 +2635,7 @@ async function generatedImageFile(imagePath: string): Promise<{ extension: strin
     if (!fileStat.isFile() || fileStat.size <= 0) {
       return null;
     }
-    return { extension, size: fileStat.size };
+    return { extension, size: fileStat.size, mtimeMs: fileStat.mtimeMs };
   } catch (error) {
     if (isNodeError(error) && error.code === "ENOENT") {
       return null;
@@ -2649,6 +2657,79 @@ function resolveGeneratedImagePath(repoPath: string, changedPath: string): strin
   }
 
   return telegramImageExtensions.has(path.extname(resolvedPath).toLowerCase()) ? resolvedPath : null;
+}
+
+async function snapshotCodexGeneratedImages(threadId: string | null): Promise<Set<string>> {
+  return new Set(await listCodexGeneratedImages(threadId));
+}
+
+async function codexGeneratedImagesAfterRun(
+  beforeRun: Set<string>,
+  runStartedAtMs: number,
+  threadId: string | null,
+): Promise<string[]> {
+  const candidates = await listCodexGeneratedImages(threadId);
+  const minMtimeMs = runStartedAtMs - 1000;
+  const results: string[] = [];
+
+  for (const imagePath of candidates) {
+    if (beforeRun.has(imagePath)) {
+      continue;
+    }
+    const file = await generatedImageFile(imagePath);
+    if (file && file.mtimeMs >= minMtimeMs) {
+      results.push(imagePath);
+    }
+  }
+
+  return results;
+}
+
+async function listCodexGeneratedImages(threadId: string | null): Promise<string[]> {
+  const root = codexGeneratedImagesRoot();
+  const start = threadId ? path.join(root, threadId) : root;
+  return listImagesRecursive(start);
+}
+
+async function listImagesRecursive(directory: string): Promise<string[]> {
+  let entries: Dirent<string>[];
+  try {
+    entries = await readdir(directory, { withFileTypes: true });
+  } catch (error) {
+    if (isNodeError(error) && error.code === "ENOENT") {
+      return [];
+    }
+    throw error;
+  }
+
+  const images: string[] = [];
+  for (const entry of entries) {
+    const entryPath = path.join(directory, entry.name);
+    if (entry.isDirectory()) {
+      images.push(...(await listImagesRecursive(entryPath)));
+    } else if (entry.isFile() && telegramImageExtensions.has(path.extname(entryPath).toLowerCase())) {
+      images.push(entryPath);
+    }
+  }
+  return images;
+}
+
+function codexGeneratedImagesRoot(): string {
+  return path.join(process.env.CODEX_HOME?.trim() || path.join(os.homedir(), ".codex"), "generated_images");
+}
+
+function displayGeneratedImagePath(repoPath: string, imagePath: string): string {
+  const repoRelativePath = path.relative(repoPath, imagePath);
+  if (repoRelativePath && !repoRelativePath.startsWith("..") && !path.isAbsolute(repoRelativePath)) {
+    return repoRelativePath;
+  }
+
+  const homeRelativePath = path.relative(os.homedir(), imagePath);
+  if (homeRelativePath && !homeRelativePath.startsWith("..") && !path.isAbsolute(homeRelativePath)) {
+    return `~/${homeRelativePath}`;
+  }
+
+  return imagePath;
 }
 
 function supportsTelegramRichDraft(binding: TopicBinding): boolean {
