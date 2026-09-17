@@ -17,6 +17,7 @@
 - Codex app-server plugin permission requests, such as installing Google Drive functionality, are surfaced in the run's bound Telegram topic with Approve for this turn, Approve for session, and Deny buttons. Session approval is the longest app-server-supported permission scope.
 - Codex app-server MCP app approval elicitations are also surfaced in the active Telegram topic. This is the path used by app and connector prompts such as Google Drive install/connect approvals.
 - Generated images can arrive two ways: changed image files inside the bound repo, or Codex imagegen cache files under `~/.codex/generated_images/<thread-id>/`. Telegram delivery must watch both because imagegen-created previews may never appear as repo file changes.
+- 2026-09-16 LIFE `home-printer` topic runs failed on `Reconnecting... 2/5` while the bridge treated an app-server `error` notification as terminal. The bridge now reports these notices as progress and waits for `turn/completed`; unexpected app-server exit still fails the run.
 
 ## 2026-08-08 W7S Topic Repair
 

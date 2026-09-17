@@ -46,6 +46,8 @@ systemctl status codex-cli-over-telegram.service --no-pager
 
 The production unit is the system service in `/etc/systemd/system/`. A disabled or inactive `systemctl --user status codex-cli-over-telegram.service` result does not describe the production bot.
 
+If a topic reports `Reconnecting...`, inspect that topic's recent runs in `data/state.sqlite`. App-server `error` notifications can be retry notices; only `turn/completed` determines the turn's final status. Do not replay printer cron jobs automatically because they may duplicate physical output.
+
 ## Restart/Deploy
 
 ```bash

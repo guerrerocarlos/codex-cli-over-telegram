@@ -23,6 +23,7 @@ interface JsonRpcServerRequest {
 
 type NotificationHandler = (message: JsonRpcNotification) => void;
 type ServerRequestHandler = (message: JsonRpcServerRequest, client: AppServerClient) => void;
+type CloseHandler = (error: Error) => void;
 
 export interface AppServerClientOptions {
   extraArgs?: string[];
@@ -37,6 +38,7 @@ export class AppServerClient {
   >();
   private readonly notificationHandlers = new Set<NotificationHandler>();
   private readonly serverRequestHandlers = new Set<ServerRequestHandler>();
+  private readonly closeHandlers = new Set<CloseHandler>();
   private nextId = 1;
   private closed = false;
 
@@ -55,11 +57,14 @@ export class AppServerClient {
 
     this.proc.once("error", (error) => {
       this.rejectAll(error);
+      this.notifyClosed(error);
     });
 
     this.proc.once("close", (code, signal) => {
       this.closed = true;
-      this.rejectAll(new Error(`codex app-server closed with code ${code ?? "null"} signal ${signal ?? "null"}`));
+      const error = new Error(`codex app-server closed with code ${code ?? "null"} signal ${signal ?? "null"}`);
+      this.rejectAll(error);
+      this.notifyClosed(error);
     });
 
     const lines = readline.createInterface({
@@ -93,6 +98,11 @@ export class AppServerClient {
   onServerRequest(handler: ServerRequestHandler): () => void {
     this.serverRequestHandlers.add(handler);
     return () => this.serverRequestHandlers.delete(handler);
+  }
+
+  onClose(handler: CloseHandler): () => void {
+    this.closeHandlers.add(handler);
+    return () => this.closeHandlers.delete(handler);
   }
 
   request(method: string, params?: unknown): Promise<unknown> {
@@ -192,5 +202,12 @@ export class AppServerClient {
       pending.reject(error);
     }
     this.pending.clear();
+  }
+
+  private notifyClosed(error: Error): void {
+    for (const handler of this.closeHandlers) {
+      handler(error);
+    }
+    this.closeHandlers.clear();
   }
 }

@@ -115,6 +115,10 @@ export class CodexAppServerBackend implements CodexBackend {
         events.close();
       }
     });
+    const unsubscribeClose = client.onClose((error) => {
+      events.push({ type: "failed", error: error.message });
+      events.close();
+    });
 
     try {
       await client.initialize();
@@ -156,6 +160,7 @@ export class CodexAppServerBackend implements CodexBackend {
       };
     } finally {
       unsubscribe();
+      unsubscribeClose();
       this.active.delete(request.bindingId);
       client.close();
     }
@@ -510,8 +515,8 @@ export class CodexAppServerBackend implements CodexBackend {
       }
       case "error": {
         return {
-          type: "failed",
-          error: params?.error?.message ?? "Codex app-server error",
+          type: "progress",
+          text: params?.error?.message ?? "Codex app-server error",
         };
       }
       case "warning":
