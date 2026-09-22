@@ -225,6 +225,7 @@ export function createTelegramBot(
           `Branch:\n${codeBlock(branch)}`,
           `Model:\n${codeBlock(await modelLabel(config, binding))}`,
           `Plan mode:\n${codeBlock(formatPlanMode(binding.planMode))}`,
+          `Mention-only:\n${codeBlock(formatMentionOnly(binding.mentionOnly))}`,
           `Mode:\n${codeBlock(effectiveRunSandboxMode(config, binding))}`,
           `Folder restriction:\n${codeBlock(formatFolderRestriction(binding))}`,
           isRepo ? null : "Git commands are unavailable until this path is initialized as a repo.",
@@ -326,6 +327,7 @@ export function createTelegramBot(
         `Branch:\n${codeBlock(branch)}`,
         `Model:\n${codeBlock(await modelLabel(config, binding))}`,
         `Plan mode:\n${codeBlock(formatPlanMode(binding.planMode))}`,
+        `Mention-only:\n${codeBlock(formatMentionOnly(binding.mentionOnly))}`,
         `Mode:\n${codeBlock(effectiveRunSandboxMode(config, binding))}`,
         `Folder restriction:\n${codeBlock(formatFolderRestriction(binding))}`,
         `Codex session:\n${codeBlock(binding.codexThreadId ?? "(new)")}`,
@@ -719,6 +721,35 @@ export function createTelegramBot(
     );
   });
 
+  bot.command("mention", async (ctx) => {
+    const binding = await requireBinding(ctx, config, storage);
+    if (!binding) {
+      return;
+    }
+
+    const requested = parseBooleanToggle(ctx.match.trim());
+    if (requested === null) {
+      await reply(ctx, "Usage: /mention on or /mention off", config);
+      return;
+    }
+
+    storage.updateBindingMentionOnly(binding.id, requested);
+    storage.audit({
+      telegramUserId: ctx.from?.id ?? null,
+      chatId: binding.chatId,
+      messageThreadId: binding.messageThreadId,
+      eventType: "mention_only",
+      details: { mentionOnly: requested },
+    });
+    await reply(
+      ctx,
+      requested
+        ? "Mention-only mode enabled. Ordinary messages in this topic will start Codex only when they mention this bot."
+        : "Mention-only mode disabled. Ordinary messages in this topic will start Codex normally.",
+      config,
+    );
+  });
+
   bot.command("topic", async (ctx) => {
     const binding = await requireBinding(ctx, config, storage);
     if (!binding) {
@@ -872,6 +903,7 @@ export function createTelegramBot(
           `Repo:\n${codeBlock(binding.repoPath)}`,
           `Model:\n${codeBlock(await modelLabel(config, binding))}`,
           `Plan mode:\n${codeBlock(formatPlanMode(binding.planMode))}`,
+          `Mention-only:\n${codeBlock(formatMentionOnly(binding.mentionOnly))}`,
           `Mode:\n${codeBlock(effectiveRunSandboxMode(config, binding))}`,
           `Folder restriction:\n${codeBlock(formatFolderRestriction(binding))}`,
           `Context:\n${codeBlock(formatThreadTokenUsage(binding.tokenUsage))}`,
@@ -887,6 +919,7 @@ export function createTelegramBot(
         `Run #${active.id} is ${active.status}.`,
         `Model:\n${codeBlock(await modelLabel(config, binding))}`,
         `Plan mode:\n${codeBlock(formatPlanMode(active.planMode))}`,
+        `Mention-only:\n${codeBlock(formatMentionOnly(binding.mentionOnly))}`,
         `Mode:\n${codeBlock(effectiveRunSandboxMode(config, binding))}`,
         `Folder restriction:\n${codeBlock(formatFolderRestriction(binding))}`,
         `Context:\n${codeBlock(formatThreadTokenUsage(binding.tokenUsage))}`,
@@ -1034,7 +1067,16 @@ export function createTelegramBot(
     if (text.startsWith("/")) {
       return;
     }
-    await handlePrompt(ctx, config, storage, codex, bot, queue, text);
+    const binding = getBindingForContext(ctx, config, storage);
+    const gatedText = mentionGatedPromptText(ctx, storage, binding, bot, text);
+    if (gatedText === null) {
+      return;
+    }
+    if (!gatedText) {
+      await reply(ctx, "Mention me with an instruction to start Codex in this topic.", config);
+      return;
+    }
+    await handlePrompt(ctx, config, storage, codex, bot, queue, gatedText);
   });
 
   bot.catch((error) => {
@@ -1079,6 +1121,14 @@ async function handleFileMessage(
     return;
   }
 
+  const gatedInstructionText = instruction.explicitCommand
+    ? instruction.text
+    : mentionGatedPromptText(ctx, storage, binding, bot, instruction.text);
+  if (gatedInstructionText === null) {
+    return;
+  }
+  const effectiveInstruction = { ...instruction, text: gatedInstructionText };
+
   if (fileRefs.length === 1 && fileRefs[0]?.kind === "voice") {
     await handleVoiceMessage(ctx, config, storage, codex, bot, queue, binding, fileRefs[0]);
     return;
@@ -1109,7 +1159,7 @@ async function handleFileMessage(
       });
     }
 
-    if (!instruction.text) {
+    if (!effectiveInstruction.text) {
       storage.addPendingContextFiles(binding.id, ctx.message?.message_id ?? null, storedFiles);
       storage.audit({
         telegramUserId: ctx.from?.id ?? null,
@@ -1133,7 +1183,7 @@ async function handleFileMessage(
       codex,
       bot,
       queue,
-      instruction.text,
+      effectiveInstruction.text,
       { contextFiles: storedFiles },
     );
   } catch (error) {
@@ -2774,6 +2824,59 @@ async function requireBinding(
   return binding;
 }
 
+function getBindingForContext(ctx: Context, config: AppConfig, storage: Storage): TopicBinding | null {
+  const topic = getTopicRef(ctx, config);
+  if (!topic) {
+    return null;
+  }
+  return storage.getBinding(topic.chatId, topic.messageThreadId);
+}
+
+function mentionGatedPromptText(
+  ctx: Context,
+  storage: Storage,
+  binding: TopicBinding | null,
+  bot: Bot,
+  text: string,
+): string | null {
+  if (!binding?.mentionOnly) {
+    return text;
+  }
+
+  const username = bot.botInfo.username;
+  if (!messageMentionsBot(text, username)) {
+    storage.audit({
+      telegramUserId: ctx.from?.id ?? null,
+      chatId: binding.chatId,
+      messageThreadId: binding.messageThreadId,
+      eventType: "mention_only_ignored",
+      details: {
+        telegramMessageId: ctx.message?.message_id ?? null,
+        hasText: text.length > 0,
+      },
+    });
+    return null;
+  }
+
+  return stripBotMention(text, username).trim();
+}
+
+function messageMentionsBot(text: string, username: string): boolean {
+  return botMentionPattern(username).test(text);
+}
+
+function stripBotMention(text: string, username: string): string {
+  return text.replace(botMentionPattern(username), " ");
+}
+
+function botMentionPattern(username: string): RegExp {
+  return new RegExp(`(^|\\s)@${escapeRegExp(username)}\\b`, "gi");
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function recordIncomingMessage(
   ctx: Context,
   config: AppConfig,
@@ -3420,7 +3523,15 @@ function formatPlanMode(planMode: boolean): string {
   return planMode ? "on" : "off";
 }
 
+function formatMentionOnly(mentionOnly: boolean): string {
+  return mentionOnly ? "on" : "off";
+}
+
 function parsePlanToggle(input: string): boolean | null {
+  return parseBooleanToggle(input);
+}
+
+function parseBooleanToggle(input: string): boolean | null {
   const normalized = input.trim().toLowerCase();
   if (["on", "true", "yes", "1"].includes(normalized)) {
     return true;
@@ -3433,13 +3544,13 @@ function parsePlanToggle(input: string): boolean | null {
 
 function parseRestrictionToggle(input: string): boolean | null {
   const normalized = input.trim().toLowerCase();
-  if (["on", "true", "yes", "1", "restricted", "restrict"].includes(normalized)) {
+  if (["restricted", "restrict"].includes(normalized)) {
     return true;
   }
-  if (["off", "false", "no", "0", "unrestricted"].includes(normalized)) {
+  if (["unrestricted"].includes(normalized)) {
     return false;
   }
-  return null;
+  return parseBooleanToggle(input);
 }
 
 function effectiveSandboxMode(config: AppConfig, sandboxMode: SandboxMode): SandboxMode {
@@ -3513,19 +3624,19 @@ function fileRef(kind: string, value: TelegramFileLike, fallbackName: string | n
   };
 }
 
-function captionInstruction(ctx: Context): { text: string; unsupportedCommand: boolean } {
+function captionInstruction(ctx: Context): { text: string; unsupportedCommand: boolean; explicitCommand: boolean } {
   const message = ctx.message as TelegramMessageWithFiles | undefined;
   const caption = message?.caption?.trim() ?? "";
   if (!caption) {
-    return { text: "", unsupportedCommand: false };
+    return { text: "", unsupportedCommand: false, explicitCommand: false };
   }
 
   const askMatch = caption.match(/^\/ask(?:@\w+)?(?:\s+([\s\S]*))?$/);
   if (askMatch) {
-    return { text: askMatch[1]?.trim() ?? "", unsupportedCommand: false };
+    return { text: askMatch[1]?.trim() ?? "", unsupportedCommand: false, explicitCommand: true };
   }
 
-  return { text: caption, unsupportedCommand: caption.startsWith("/") };
+  return { text: caption, unsupportedCommand: caption.startsWith("/"), explicitCommand: false };
 }
 
 function uploadedFilesSavedText(files: StoredContextFile[]): string {
@@ -3942,6 +4053,8 @@ function helpText(): string {
     "/mode write - allow Codex workspace edits",
     "/restrict on - force runs to stay inside this topic folder",
     "/restrict off - use the normal topic mode and global yolo setting",
+    "/mention on - trigger ordinary prompts only when this bot is mentioned",
+    "/mention off - trigger ordinary prompts normally",
     "/topic - rename this Telegram topic to the bound folder name",
     "/new - start a fresh agent thread with clean context",
     "/compact - compact this topic's Codex thread when using OpenAI",
@@ -3987,6 +4100,7 @@ export function telegramCommandMenu(): Array<{ command: string; description: str
     { command: "planoff", description: "Disable topic plan mode" },
     { command: "mode", description: "Set read or write sandbox mode" },
     { command: "restrict", description: "Restrict runs to topic folder" },
+    { command: "mention", description: "Require bot mentions for prompts" },
     { command: "topic", description: "Rename this Telegram topic" },
     { command: "new", description: "Start a fresh agent thread" },
     { command: "compact", description: "Compact OpenAI thread" },

@@ -15,6 +15,7 @@ export interface TopicBinding {
   model: string | null;
   modelServiceTier: string | null;
   planMode: boolean;
+  mentionOnly: boolean;
   sandboxMode: SandboxMode;
   restrictedToRepo: boolean;
   approvalPolicy: "never";

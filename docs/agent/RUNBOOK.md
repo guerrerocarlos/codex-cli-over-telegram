@@ -26,6 +26,17 @@ Inside a bound Telegram topic:
 
 `/restrict on` forces that topic to ignore `CODEX_ALWAYS_YOLO`, keeps read-only topics read-only, maps write-capable topics to `workspace-write`, and removes the Telegram manager MCP bridge from app-server runs. `/where` and `/status` show the current restriction state.
 
+## Per-Topic Mention-Only Mode
+
+Inside a bound Telegram topic:
+
+```text
+/mention on
+/mention off
+```
+
+`/mention on` keeps ordinary group chatter from starting or steering Codex unless the message mentions the bot username. Explicit commands such as `/ask`, `/queue`, and `/plan` still trigger Codex. Uploads without a bot mention are ignored instead of staged. `/where` and `/status` show the current mention-only state.
+
 ## Verify Manager Bridge Chat Scope
 
 When topic creation or `telegram_manager.list_topics` appears to use the wrong Telegram group, replay the bridge with the intended chat id pinned:

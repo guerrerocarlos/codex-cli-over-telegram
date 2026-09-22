@@ -119,6 +119,8 @@ Useful commands:
 /mode write
 /restrict on
 /restrict off
+/mention on
+/mention off
 /status
 /stop
 /new
@@ -141,7 +143,7 @@ Useful commands:
 /cron off 3
 ```
 
-Normal messages in a bound chat/topic are sent to Codex. During an active app-server run, normal messages are sent as steering notes to the current turn. Use `/queue <prompt>` when you want the message to wait as the next turn, similar to queueing in the Codex TUI. Use `/ask` if Telegram privacy mode prevents the bot from seeing ordinary group messages.
+Normal messages in a bound chat/topic are sent to Codex. During an active app-server run, normal messages are sent as steering notes to the current turn. Use `/mention on` in a topic when ordinary group chatter should be ignored unless it mentions the bot, and use `/mention off` to return to normal prompt handling. Explicit commands such as `/ask`, `/queue`, and `/plan` still work while mention-only mode is enabled. Use `/queue <prompt>` when you want the message to wait as the next turn, similar to queueing in the Codex TUI. Use `/ask` if Telegram privacy mode prevents the bot from seeing ordinary group messages.
 
 Use `/create <folder>` to create a new folder inside `ALLOWED_REPO_ROOTS`, create a Telegram forum topic, and bind that new topic to the folder. If the folder already exists, the bot still creates and binds the topic and reports that it reused the existing folder. Relative paths are created under the first allowed root; `~/...` and absolute paths are accepted when they stay inside an allowed root. The bot must be allowed to manage forum topics, and `ALLOW_UNTHREADED_CHATS=true` is required when Telegram sends the general topic without a `message_thread_id`.
 
