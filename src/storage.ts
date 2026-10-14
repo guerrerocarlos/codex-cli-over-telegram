@@ -24,6 +24,7 @@ interface BindingRow {
   model_service_tier: string | null;
   plan_mode: number;
   mention_only: number;
+  plain_text_only: number;
   sandbox_mode: SandboxMode;
   restricted_to_repo: number;
   approval_policy: "never";
@@ -200,6 +201,7 @@ function mapBinding(row: BindingRow): TopicBinding {
     modelServiceTier: row.model_service_tier,
     planMode: row.plan_mode === 1,
     mentionOnly: row.mention_only === 1,
+    plainTextOnly: row.plain_text_only === 1,
     sandboxMode: row.sandbox_mode,
     restrictedToRepo: row.restricted_to_repo === 1,
     approvalPolicy: row.approval_policy,
@@ -363,6 +365,7 @@ export class Storage {
         model_service_tier TEXT,
         plan_mode INTEGER NOT NULL DEFAULT 0,
         mention_only INTEGER NOT NULL DEFAULT 0,
+        plain_text_only INTEGER NOT NULL DEFAULT 0,
         sandbox_mode TEXT NOT NULL DEFAULT 'read-only',
         restricted_to_repo INTEGER NOT NULL DEFAULT 0,
         approval_policy TEXT NOT NULL DEFAULT 'never',
@@ -494,6 +497,7 @@ export class Storage {
     this.addColumnIfMissing("topic_bindings", "model_service_tier", "TEXT");
     this.addColumnIfMissing("topic_bindings", "plan_mode", "INTEGER NOT NULL DEFAULT 0");
     this.addColumnIfMissing("topic_bindings", "mention_only", "INTEGER NOT NULL DEFAULT 0");
+    this.addColumnIfMissing("topic_bindings", "plain_text_only", "INTEGER NOT NULL DEFAULT 0");
     this.addColumnIfMissing("topic_bindings", "token_usage_json", "TEXT");
     this.addColumnIfMissing("topic_bindings", "restricted_to_repo", "INTEGER NOT NULL DEFAULT 0");
     this.addColumnIfMissing("runs", "plan_mode", "INTEGER NOT NULL DEFAULT 0");
@@ -873,6 +877,12 @@ export class Storage {
     this.db
       .prepare("UPDATE topic_bindings SET mention_only = ?, updated_at = ? WHERE id = ?")
       .run(mentionOnly ? 1 : 0, now(), bindingId);
+  }
+
+  updateBindingPlainTextOnly(bindingId: number, plainTextOnly: boolean): void {
+    this.db
+      .prepare("UPDATE topic_bindings SET plain_text_only = ?, updated_at = ? WHERE id = ?")
+      .run(plainTextOnly ? 1 : 0, now(), bindingId);
   }
 
   updateBindingThread(bindingId: number, codexThreadId: string | null): void {

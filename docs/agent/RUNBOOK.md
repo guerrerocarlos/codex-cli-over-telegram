@@ -57,6 +57,20 @@ systemctl status codex-cli-over-telegram.service --no-pager
 
 The production unit is the system service in `/etc/systemd/system/`. A disabled or inactive `systemctl --user status codex-cli-over-telegram.service` result does not describe the production bot.
 
+## Approve a New Telegram User
+
+When an unknown user messages the bot in an approved chat, the bot sends an approval card to the configured management topic. An already approved operator must select **Approve user**. The user ID is appended to `ALLOWED_TELEGRAM_USER_IDS_FILE` and is active immediately.
+
+## Use Text-only Mode
+
+Inside a bound topic, use:
+
+```text
+/textonly on
+```
+
+This hides technical execution output and diffs from that topic. Use `/textonly off` to restore normal technical output.
+
 If a topic reports `Reconnecting...`, inspect that topic's recent runs in `data/state.sqlite`. App-server `error` notifications can be retry notices; only `turn/completed` determines the turn's final status. Do not replay printer cron jobs automatically because they may duplicate physical output.
 
 ## Restart/Deploy

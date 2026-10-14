@@ -10,6 +10,7 @@ export type CodexBackendKind = "app-server" | "exec";
 export interface AppConfig {
   telegramBotToken: string;
   allowedTelegramUserIds: Set<number>;
+  allowedTelegramUserIdsFile: string;
   allowedTelegramChatIds: Set<number>;
   allowedTelegramChatIdsFile: string;
   approvalTelegramChatId: number | null;
@@ -224,6 +225,7 @@ export function loadConfig(): AppConfig {
   return {
     telegramBotToken: required("TELEGRAM_BOT_TOKEN"),
     allowedTelegramUserIds,
+    allowedTelegramUserIdsFile: extraTelegramUsersFile,
     allowedTelegramChatIds,
     allowedTelegramChatIdsFile: extraTelegramChatsFile,
     approvalTelegramChatId,

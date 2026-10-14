@@ -147,6 +147,17 @@ export function createTelegramBot(
         eventType: "unauthorized_message",
         details: { username: ctx.from?.username ?? null },
       });
+      await sendUserApprovalRequest(bot, config, storage, ctx, sendQueue);
+      await reply(
+        ctx,
+        [
+          "Your access to this agent has not been approved yet.",
+          "",
+          "An approval request was sent to the bot management topic.",
+        ].join("\n"),
+        config,
+        sendQueue,
+      );
       return;
     }
 
@@ -226,6 +237,7 @@ export function createTelegramBot(
           `Model:\n${codeBlock(await modelLabel(config, binding))}`,
           `Plan mode:\n${codeBlock(formatPlanMode(binding.planMode))}`,
           `Mention-only:\n${codeBlock(formatMentionOnly(binding.mentionOnly))}`,
+          `Text-only:\n${codeBlock(formatPlainTextOnly(binding.plainTextOnly))}`,
           `Mode:\n${codeBlock(effectiveRunSandboxMode(config, binding))}`,
           `Folder restriction:\n${codeBlock(formatFolderRestriction(binding))}`,
           isRepo ? null : "Git commands are unavailable until this path is initialized as a repo.",
@@ -328,6 +340,7 @@ export function createTelegramBot(
         `Model:\n${codeBlock(await modelLabel(config, binding))}`,
         `Plan mode:\n${codeBlock(formatPlanMode(binding.planMode))}`,
         `Mention-only:\n${codeBlock(formatMentionOnly(binding.mentionOnly))}`,
+        `Text-only:\n${codeBlock(formatPlainTextOnly(binding.plainTextOnly))}`,
         `Mode:\n${codeBlock(effectiveRunSandboxMode(config, binding))}`,
         `Folder restriction:\n${codeBlock(formatFolderRestriction(binding))}`,
         `Codex session:\n${codeBlock(binding.codexThreadId ?? "(new)")}`,
@@ -551,6 +564,39 @@ export function createTelegramBot(
     );
   });
 
+  bot.callbackQuery(/^userapprove:\d+$/, async (ctx) => {
+    const fromId = ctx.from?.id;
+    if (!fromId || !config.allowedTelegramUserIds.has(fromId)) {
+      await ctx.answerCallbackQuery({ text: "Not authorized.", show_alert: true });
+      return;
+    }
+
+    const userId = Number(ctx.callbackQuery.data.slice("userapprove:".length));
+    if (!Number.isSafeInteger(userId) || userId <= 0) {
+      await ctx.answerCallbackQuery({ text: "Invalid user id.", show_alert: true });
+      return;
+    }
+
+    const alreadyAllowed = config.allowedTelegramUserIds.has(userId);
+    persistAllowedTelegramUser(config, userId);
+    storage.audit({
+      telegramUserId: fromId,
+      chatId: ctx.callbackQuery.message?.chat.id ?? null,
+      messageThreadId: ctx.callbackQuery.message?.message_thread_id ?? null,
+      eventType: "user_approved",
+      details: { approvedUserId: userId, approvedBy: fromId, alreadyAllowed },
+    });
+    await ctx.answerCallbackQuery({ text: alreadyAllowed ? "User was already approved." : "User approved." });
+    await reply(
+      ctx,
+      [
+        alreadyAllowed ? "Telegram user was already approved:" : "Approved Telegram user:",
+        codeBlock(String(userId)),
+      ].join("\n"),
+      config,
+    );
+  });
+
   bot.callbackQuery(/^perm:(turn|session|deny):[A-Za-z0-9_-]+$/, async (ctx) => {
     const fromId = ctx.from?.id;
     if (!fromId || !config.allowedTelegramUserIds.has(fromId)) {
@@ -750,6 +796,35 @@ export function createTelegramBot(
     );
   });
 
+  bot.command("textonly", async (ctx) => {
+    const binding = await requireBinding(ctx, config, storage);
+    if (!binding) {
+      return;
+    }
+
+    const requested = parseBooleanToggle(ctx.match.trim());
+    if (requested === null) {
+      await reply(ctx, "Usage: /textonly on or /textonly off", config);
+      return;
+    }
+
+    storage.updateBindingPlainTextOnly(binding.id, requested);
+    storage.audit({
+      telegramUserId: ctx.from?.id ?? null,
+      chatId: binding.chatId,
+      messageThreadId: binding.messageThreadId,
+      eventType: "plain_text_only",
+      details: { plainTextOnly: requested },
+    });
+    await reply(
+      ctx,
+      requested
+        ? "Text-only mode enabled. The agent will hide command output, changed-file notices, and diffs while keeping plain-language updates."
+        : "Text-only mode disabled. Command output and diffs will be shown normally.",
+      config,
+    );
+  });
+
   bot.command("topic", async (ctx) => {
     const binding = await requireBinding(ctx, config, storage);
     if (!binding) {
@@ -904,6 +979,7 @@ export function createTelegramBot(
           `Model:\n${codeBlock(await modelLabel(config, binding))}`,
           `Plan mode:\n${codeBlock(formatPlanMode(binding.planMode))}`,
           `Mention-only:\n${codeBlock(formatMentionOnly(binding.mentionOnly))}`,
+          `Text-only:\n${codeBlock(formatPlainTextOnly(binding.plainTextOnly))}`,
           `Mode:\n${codeBlock(effectiveRunSandboxMode(config, binding))}`,
           `Folder restriction:\n${codeBlock(formatFolderRestriction(binding))}`,
           `Context:\n${codeBlock(formatThreadTokenUsage(binding.tokenUsage))}`,
@@ -920,6 +996,7 @@ export function createTelegramBot(
         `Model:\n${codeBlock(await modelLabel(config, binding))}`,
         `Plan mode:\n${codeBlock(formatPlanMode(active.planMode))}`,
         `Mention-only:\n${codeBlock(formatMentionOnly(binding.mentionOnly))}`,
+        `Text-only:\n${codeBlock(formatPlainTextOnly(binding.plainTextOnly))}`,
         `Mode:\n${codeBlock(effectiveRunSandboxMode(config, binding))}`,
         `Folder restriction:\n${codeBlock(formatFolderRestriction(binding))}`,
         `Context:\n${codeBlock(formatThreadTokenUsage(binding.tokenUsage))}`,
@@ -951,6 +1028,10 @@ export function createTelegramBot(
       return;
     }
     if (!(await ensureGitRepository(ctx, config, binding))) {
+      return;
+    }
+    if (binding.plainTextOnly) {
+      await reply(ctx, "Diff output is hidden while text-only mode is enabled. Use /textonly off to view it.", config);
       return;
     }
     const summary = await diffSummary(binding.repoPath);
@@ -994,9 +1075,9 @@ export function createTelegramBot(
         eventType: "commit",
         details: { message },
       });
-      await reply(ctx, codeBlock(output), config);
+      await reply(ctx, binding.plainTextOnly ? "Committed the requested changes." : codeBlock(output), config);
     } catch (error) {
-      await reply(ctx, `Commit failed:\n${codeBlock(errorMessage(error))}`, config);
+      await reply(ctx, binding.plainTextOnly ? "The commit failed. Turn off text-only mode to view the technical error." : `Commit failed:\n${codeBlock(errorMessage(error))}`, config);
     }
   });
 
@@ -1021,9 +1102,9 @@ export function createTelegramBot(
         eventType: "push",
         details: {},
       });
-      await reply(ctx, codeBlock(output), config);
+      await reply(ctx, binding.plainTextOnly ? "Pushed the current branch." : codeBlock(output), config);
     } catch (error) {
-      await reply(ctx, `Push failed:\n${codeBlock(errorMessage(error))}`, config);
+      await reply(ctx, binding.plainTextOnly ? "The push failed. Turn off text-only mode to view the technical error." : `Push failed:\n${codeBlock(errorMessage(error))}`, config);
     }
   });
 
@@ -2189,6 +2270,65 @@ async function sendChatApprovalRequest(
   });
 }
 
+async function sendUserApprovalRequest(
+  bot: Bot,
+  config: AppConfig,
+  storage: Storage,
+  ctx: Context,
+  sendQueue: TelegramSendQueue,
+): Promise<void> {
+  const user = ctx.from;
+  if (!user || !config.approvalTelegramChatId) {
+    return;
+  }
+
+  const chatId = ctx.chat?.id ?? null;
+  const text = [
+    "Telegram user approval requested.",
+    "",
+    `User:\n${codeBlock(formatTelegramUser(user))}`,
+    chatId === null ? null : `Requested from chat:\n${codeBlock(String(chatId))}`,
+    "",
+    "Approve this user so they can use the bot in authorized chats.",
+  ]
+    .filter((line): line is string => Boolean(line))
+    .join("\n");
+  const keyboard = new InlineKeyboard().text("Approve user", `userapprove:${user.id}`);
+  const chunks = markdownV2Chunks(text, config.maxTelegramMessageChars);
+  const [first, ...rest] = chunks;
+  if (!first) {
+    return;
+  }
+
+  await sendQueue.sendMessage(bot.api, config.approvalTelegramChatId, first, {
+    ...(config.approvalTelegramMessageThreadId > 0 ? { message_thread_id: config.approvalTelegramMessageThreadId } : {}),
+    link_preview_options: { is_disabled: true },
+    parse_mode: "MarkdownV2",
+    disable_notification: false,
+    reply_markup: keyboard,
+  });
+  for (const chunk of rest) {
+    await sendQueue.sendMessage(bot.api, config.approvalTelegramChatId, chunk, {
+      ...(config.approvalTelegramMessageThreadId > 0 ? { message_thread_id: config.approvalTelegramMessageThreadId } : {}),
+      link_preview_options: { is_disabled: true },
+      parse_mode: "MarkdownV2",
+      disable_notification: true,
+    });
+  }
+
+  storage.audit({
+    telegramUserId: user.id,
+    chatId,
+    messageThreadId: ctx.message?.message_thread_id ?? null,
+    eventType: "user_approval_requested",
+    details: {
+      username: user.username ?? null,
+      approvalChatId: config.approvalTelegramChatId,
+      approvalMessageThreadId: config.approvalTelegramMessageThreadId,
+    },
+  });
+}
+
 function persistAllowedTelegramChat(config: AppConfig, chatId: number): void {
   if (config.allowedTelegramChatIds.has(chatId)) {
     return;
@@ -2196,6 +2336,15 @@ function persistAllowedTelegramChat(config: AppConfig, chatId: number): void {
   mkdirSync(path.dirname(config.allowedTelegramChatIdsFile), { recursive: true });
   appendFileSync(config.allowedTelegramChatIdsFile, `${chatId}\n`, "utf8");
   config.allowedTelegramChatIds.add(chatId);
+}
+
+function persistAllowedTelegramUser(config: AppConfig, userId: number): void {
+  if (config.allowedTelegramUserIds.has(userId)) {
+    return;
+  }
+  mkdirSync(path.dirname(config.allowedTelegramUserIdsFile), { recursive: true });
+  appendFileSync(config.allowedTelegramUserIdsFile, `${userId}\n`, "utf8");
+  config.allowedTelegramUserIds.add(userId);
 }
 
 function formatTelegramUser(user: Context["from"]): string {
@@ -2524,7 +2673,12 @@ async function executeRun(
       }
 
       if (event.type === "agent_message_delta") {
-        if (config.telegramAgentStreaming && binding.modelProvider !== "openai" && supportsTelegramRichDraft(binding)) {
+        if (
+          !binding.plainTextOnly &&
+          config.telegramAgentStreaming &&
+          binding.modelProvider !== "openai" &&
+          supportsTelegramRichDraft(binding)
+        ) {
           richStreamer ??= new TelegramRichDraftStreamer(config, binding);
           richStreamer.append(event.text);
           await richStreamer.flush();
@@ -2534,13 +2688,15 @@ async function executeRun(
 
       if (event.type === "command_started") {
         await flushAgentMessagesBeforeProgress();
-        await sendText(bot, config, binding, codeBlock(truncateText(event.text, 900), "bash"));
+        if (!binding.plainTextOnly) {
+          await sendText(bot, config, binding, codeBlock(truncateText(event.text, 900), "bash"));
+        }
         continue;
       }
 
       if (event.type === "command_completed") {
         await flushAgentMessagesBeforeProgress();
-        if (event.text.trim()) {
+        if (!binding.plainTextOnly && event.text.trim()) {
           await sendText(bot, config, binding, codeBlock(truncateText(event.text, 1200)));
         }
         continue;
@@ -2554,7 +2710,9 @@ async function executeRun(
             changedImagePaths.add(imagePath);
           }
         }
-        await sendText(bot, config, binding, `Changed:\n${codeBlock(event.text)}`);
+        if (!binding.plainTextOnly) {
+          await sendText(bot, config, binding, `Changed:\n${codeBlock(event.text)}`);
+        }
         continue;
       }
 
@@ -3070,7 +3228,11 @@ async function sendText(
   text: string,
   options: SendOptions = {},
 ): Promise<number | null> {
-  return sendTextToTopic(bot, config, binding.chatId, binding.messageThreadId, text, options);
+  const visibleText = binding.plainTextOnly ? stripCodeBlocks(text) : text;
+  if (!visibleText.trim()) {
+    return null;
+  }
+  return sendTextToTopic(bot, config, binding.chatId, binding.messageThreadId, visibleText, options);
 }
 
 async function sendPermissionApprovalRequest(
@@ -3525,6 +3687,17 @@ function formatPlanMode(planMode: boolean): string {
 
 function formatMentionOnly(mentionOnly: boolean): string {
   return mentionOnly ? "on" : "off";
+}
+
+function formatPlainTextOnly(plainTextOnly: boolean): string {
+  return plainTextOnly ? "on" : "off";
+}
+
+function stripCodeBlocks(text: string): string {
+  return text
+    .replace(/```[\s\S]*?```/g, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 function parsePlanToggle(input: string): boolean | null {
@@ -4055,6 +4228,8 @@ function helpText(): string {
     "/restrict off - use the normal topic mode and global yolo setting",
     "/mention on - trigger ordinary prompts only when this bot is mentioned",
     "/mention off - trigger ordinary prompts normally",
+    "/textonly on - hide command output and diffs in this topic",
+    "/textonly off - show technical output normally",
     "/topic - rename this Telegram topic to the bound folder name",
     "/new - start a fresh agent thread with clean context",
     "/compact - compact this topic's Codex thread when using OpenAI",
@@ -4101,6 +4276,7 @@ export function telegramCommandMenu(): Array<{ command: string; description: str
     { command: "mode", description: "Set read or write sandbox mode" },
     { command: "restrict", description: "Restrict runs to topic folder" },
     { command: "mention", description: "Require bot mentions for prompts" },
+    { command: "textonly", description: "Hide technical output in this topic" },
     { command: "topic", description: "Rename this Telegram topic" },
     { command: "new", description: "Start a fresh agent thread" },
     { command: "compact", description: "Compact OpenAI thread" },
