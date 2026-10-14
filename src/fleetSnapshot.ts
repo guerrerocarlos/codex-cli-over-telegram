@@ -54,6 +54,7 @@ interface BindingRow {
   model: string | null;
   model_service_tier: string | null;
   plan_mode: number;
+  plain_text_only: number;
   sandbox_mode: string;
   restricted_to_repo: number;
   approval_policy: string;
@@ -279,6 +280,7 @@ function formatBinding(binding: BindingRow): Record<string, unknown> {
     model: binding.model,
     modelServiceTier: binding.model_service_tier,
     planMode: binding.plan_mode === 1,
+    plainTextOnly: binding.plain_text_only === 1,
     sandboxMode: binding.sandbox_mode,
     restrictedToRepo: binding.restricted_to_repo === 1,
     approvalPolicy: binding.approval_policy,
