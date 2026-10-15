@@ -2359,6 +2359,24 @@ function formatTelegramUser(user: Context["from"]): string {
   return parts.join(" / ");
 }
 
+function requesterAwareTaskPrompt(ctx: Context, taskText: string): string {
+  const username = ctx.from?.username?.trim();
+  const requesterMention = username && /^[A-Za-z0-9_]{5,32}$/.test(username) ? `@${username}` : null;
+  const completionInstruction = requesterMention
+    ? [
+        "Telegram requester metadata:",
+        `The requester is ${requesterMention}.`,
+        `When this task is complete, address the completion to ${requesterMention}, rather than a default owner mention.`,
+      ].join("\n")
+    : [
+        "Telegram requester metadata:",
+        "The requester has no valid Telegram username.",
+        "When this task is complete, address the requester in plain language without using a default owner mention.",
+      ].join("\n");
+
+  return `${completionInstruction}\n\nTask:\n${taskText}`;
+}
+
 async function setTopicPlanMode(
   ctx: Context,
   config: AppConfig,
@@ -2407,12 +2425,12 @@ async function handlePrompt(
     ...(options.includePendingContext === false ? [] : storage.consumePendingContextFiles(binding.id)),
     ...(options.contextFiles ?? []),
   ];
-  const promptText = promptContextFiles.length > 0 ? uploadedFilesPrompt(promptContextFiles, text) : text;
+  const taskText = promptContextFiles.length > 0 ? uploadedFilesPrompt(promptContextFiles, text) : text;
 
   const active = storage.getActiveRun(binding.id);
   if (!options.forceQueue && active && active.status === "running" && codex.steer) {
     try {
-      const steered = await codex.steer(binding.id, promptText);
+      const steered = await codex.steer(binding.id, taskText);
       if (steered) {
         storage.audit({
           telegramUserId: ctx.from?.id ?? null,
@@ -2432,6 +2450,7 @@ async function handlePrompt(
   const key = topicKey(binding.chatId, binding.messageThreadId);
   const queuedBehind = queue.depth(key);
   const planMode = options.planMode ?? binding.planMode;
+  const promptText = requesterAwareTaskPrompt(ctx, taskText);
   const run = storage.createRun(binding.id, ctx.message?.message_id ?? null, promptText, planMode);
 
   if (queuedBehind > 0) {
