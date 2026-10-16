@@ -22,6 +22,7 @@ interface BindingRow {
   model_provider: ModelProvider | null;
   model: string | null;
   model_service_tier: string | null;
+  reasoning_effort: string | null;
   plan_mode: number;
   mention_only: number;
   plain_text_only: number;
@@ -199,6 +200,7 @@ function mapBinding(row: BindingRow): TopicBinding {
     modelProvider: normalizeModelProvider(row.model_provider),
     model: row.model,
     modelServiceTier: row.model_service_tier,
+    reasoningEffort: row.reasoning_effort,
     planMode: row.plan_mode === 1,
     mentionOnly: row.mention_only === 1,
     plainTextOnly: row.plain_text_only === 1,
@@ -495,6 +497,7 @@ export class Storage {
     this.addColumnIfMissing("topic_bindings", "model", "TEXT");
     this.addColumnIfMissing("topic_bindings", "model_provider", "TEXT NOT NULL DEFAULT 'openai'");
     this.addColumnIfMissing("topic_bindings", "model_service_tier", "TEXT");
+    this.addColumnIfMissing("topic_bindings", "reasoning_effort", "TEXT");
     this.addColumnIfMissing("topic_bindings", "plan_mode", "INTEGER NOT NULL DEFAULT 0");
     this.addColumnIfMissing("topic_bindings", "mention_only", "INTEGER NOT NULL DEFAULT 0");
     this.addColumnIfMissing("topic_bindings", "plain_text_only", "INTEGER NOT NULL DEFAULT 0");
@@ -871,6 +874,11 @@ export class Storage {
     this.db
       .prepare("UPDATE topic_bindings SET plan_mode = ?, updated_at = ? WHERE id = ?")
       .run(planMode ? 1 : 0, now(), bindingId);
+  }
+
+  updateBindingReasoningEffort(bindingId: number, reasoningEffort: string | null): void {
+    this.db.prepare("UPDATE topic_bindings SET reasoning_effort = ?, updated_at = ? WHERE id = ?")
+      .run(reasoningEffort, now(), bindingId);
   }
 
   updateBindingMentionOnly(bindingId: number, mentionOnly: boolean): void {

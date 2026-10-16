@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { AppServerClient } from "./appServerClient.js";
 import { AsyncQueue } from "./asyncQueue.js";
 import { describeCommandOutput } from "./commandOutput.js";
-import { codexProviderArgs, codexServiceTierArgs } from "./modelProviders.js";
+import { codexProviderArgs, codexServiceTierArgs, codexReasoningArgs } from "./modelProviders.js";
 import { PLAN_MODE_DEVELOPER_INSTRUCTIONS } from "./planMode.js";
 import type { AppConfig } from "./config.js";
 import type {
@@ -131,9 +131,16 @@ export class CodexAppServerBackend implements CodexBackend {
 
       events.push({ type: "started", threadId, text: `Started app-server thread ${threadId}` });
 
+      // Resolve defaults afresh so resetting an override also affects resumed threads.
+      const configResponse = await client.request("config/read", {
+        cwd: request.repoPath, includeLayers: false,
+      }) as { config?: { model_reasoning_effort?: string | null } };
+      const effort = request.reasoningEffort ?? configResponse.config?.model_reasoning_effort ?? null;
+
       const turnResponse = (await client.request("turn/start", {
         threadId,
         input: [{ type: "text", text: request.prompt, text_elements: [] }],
+        effort,
         cwd: request.repoPath,
         model: request.model,
         approvalPolicy: request.approvalPolicy,
@@ -422,6 +429,7 @@ export class CodexAppServerBackend implements CodexBackend {
     return {
       extraArgs: [
         ...bridgeArgs,
+        ...codexReasoningArgs(request?.modelProvider === "openai" ? request.reasoningEffort : null),
         ...codexProviderArgs(this.config, request?.modelProvider ?? this.config.defaultModelProvider),
         ...codexServiceTierArgs(
           request?.modelProvider === "openai" ? request.modelServiceTier : null,

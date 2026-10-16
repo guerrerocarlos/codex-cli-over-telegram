@@ -53,6 +53,7 @@ interface BindingRow {
   model_provider: string | null;
   model: string | null;
   model_service_tier: string | null;
+  reasoning_effort?: string | null;
   plan_mode: number;
   plain_text_only: number;
   sandbox_mode: string;
@@ -279,6 +280,7 @@ function formatBinding(binding: BindingRow): Record<string, unknown> {
     modelProvider: binding.model_provider ?? "openai",
     model: binding.model,
     modelServiceTier: binding.model_service_tier,
+    reasoningEffort: binding.reasoning_effort ?? null,
     planMode: binding.plan_mode === 1,
     plainTextOnly: binding.plain_text_only === 1,
     sandboxMode: binding.sandbox_mode,

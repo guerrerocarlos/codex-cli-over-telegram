@@ -1,5 +1,11 @@
 # Agent Decisions
 
+## Per-Topic Reasoning
+
+Store a nullable effort override on the binding rather than changing global Codex config.
+Resolve inherited app-server effort on each run and pass it explicitly to turn/start so
+resumed threads pick up resets. Steering does not change an active turn's effort.
+
 ## 2026-07-08: Quiet Run-Start Feedback
 
 Normal Telegram prompts should not produce a verbose start dialog with repo, model, plan mode, and sandbox mode.

@@ -2,7 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import readline from "node:readline";
 import { describeCommandOutput } from "./commandOutput.js";
 import type { AppConfig } from "./config.js";
-import { codexProviderArgs, codexServiceTierArgs } from "./modelProviders.js";
+import { codexProviderArgs, codexServiceTierArgs, codexReasoningArgs } from "./modelProviders.js";
 import { PLAN_MODE_DEVELOPER_INSTRUCTIONS } from "./planMode.js";
 import type { CodexBackend, CodexRunEvent, CodexRunRequest } from "./types.js";
 import { logger } from "./logger.js";
@@ -46,6 +46,7 @@ export class CodexExecBackend implements CodexBackend {
       `approval_policy="${request.approvalPolicy}"`,
       ...codexProviderArgs(this.config, request.modelProvider),
       ...codexServiceTierArgs(request.modelProvider === "openai" ? request.modelServiceTier : null),
+      ...codexReasoningArgs(request.modelProvider === "openai" ? request.reasoningEffort : null),
     ];
 
     if (request.model) {

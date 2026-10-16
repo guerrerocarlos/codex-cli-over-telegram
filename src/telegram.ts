@@ -236,6 +236,7 @@ export function createTelegramBot(
           `Branch:\n${codeBlock(branch)}`,
           `Model:\n${codeBlock(await modelLabel(config, binding))}`,
           `Plan mode:\n${codeBlock(formatPlanMode(binding.planMode))}`,
+          `Reasoning (next run): ${binding.reasoningEffort ?? "Codex default"}`,
           `Mention-only:\n${codeBlock(formatMentionOnly(binding.mentionOnly))}`,
           `Text-only:\n${codeBlock(formatPlainTextOnly(binding.plainTextOnly))}`,
           `Mode:\n${codeBlock(effectiveRunSandboxMode(config, binding))}`,
@@ -339,6 +340,7 @@ export function createTelegramBot(
         `Branch:\n${codeBlock(branch)}`,
         `Model:\n${codeBlock(await modelLabel(config, binding))}`,
         `Plan mode:\n${codeBlock(formatPlanMode(binding.planMode))}`,
+        `Reasoning (next run): ${binding.reasoningEffort ?? "Codex default"}`,
         `Mention-only:\n${codeBlock(formatMentionOnly(binding.mentionOnly))}`,
         `Text-only:\n${codeBlock(formatPlainTextOnly(binding.plainTextOnly))}`,
         `Mode:\n${codeBlock(effectiveRunSandboxMode(config, binding))}`,
@@ -436,6 +438,35 @@ export function createTelegramBot(
     } catch (error) {
       await reply(ctx, `Could not set model:\n${codeBlock(errorMessage(error))}`, config);
     }
+  });
+
+  bot.command("reasoning", async (ctx) => {
+    const binding = await requireBinding(ctx, config, storage);
+    if (!binding) return;
+    if (binding.modelProvider !== "openai") {
+      await reply(ctx, "Per-topic reasoning is currently supported for OpenAI/Codex topics only.", config);
+      return;
+    }
+    const value = ctx.match.trim().toLowerCase();
+    if (!value) {
+      const inherited = binding.reasoningEffort === null
+        ? (await readCodexConfig(config.codexBin, binding.repoPath)).reasoningEffort
+        : null;
+      await reply(ctx, `Reasoning: ${binding.reasoningEffort ?? `default (${inherited ?? "model default"})`}\nUsage: /reasoning low|medium|high|xhigh|minimal|none|default\nSupported levels depend on the selected model. Changes apply to the next run.`, config);
+      return;
+    }
+    if (!["none", "minimal", "low", "medium", "high", "xhigh", "default"].includes(value)) {
+      await reply(ctx, "Usage: /reasoning low|medium|high|xhigh|minimal|none|default", config);
+      return;
+    }
+    const reasoningEffort = value === "default" ? null : value;
+    storage.updateBindingReasoningEffort(binding.id, reasoningEffort);
+    storage.audit({
+      telegramUserId: ctx.from?.id ?? null, chatId: binding.chatId,
+      messageThreadId: binding.messageThreadId, eventType: "reasoning",
+      details: { reasoningEffort },
+    });
+    await reply(ctx, `Topic reasoning set to ${value}. Applies to the next run; an active run keeps its current effort.`, config);
   });
 
   bot.command("provider", async (ctx) => {
@@ -978,6 +1009,7 @@ export function createTelegramBot(
           `Repo:\n${codeBlock(binding.repoPath)}`,
           `Model:\n${codeBlock(await modelLabel(config, binding))}`,
           `Plan mode:\n${codeBlock(formatPlanMode(binding.planMode))}`,
+          `Reasoning (next run): ${binding.reasoningEffort ?? "Codex default"}`,
           `Mention-only:\n${codeBlock(formatMentionOnly(binding.mentionOnly))}`,
           `Text-only:\n${codeBlock(formatPlainTextOnly(binding.plainTextOnly))}`,
           `Mode:\n${codeBlock(effectiveRunSandboxMode(config, binding))}`,
@@ -995,6 +1027,7 @@ export function createTelegramBot(
         `Run #${active.id} is ${active.status}.`,
         `Model:\n${codeBlock(await modelLabel(config, binding))}`,
         `Plan mode:\n${codeBlock(formatPlanMode(active.planMode))}`,
+        `Reasoning (next run): ${binding.reasoningEffort ?? "Codex default"}`,
         `Mention-only:\n${codeBlock(formatMentionOnly(binding.mentionOnly))}`,
         `Text-only:\n${codeBlock(formatPlainTextOnly(binding.plainTextOnly))}`,
         `Mode:\n${codeBlock(effectiveRunSandboxMode(config, binding))}`,
@@ -2649,6 +2682,7 @@ async function executeRun(
       modelProvider: binding.modelProvider,
       model: binding.model,
       modelServiceTier: binding.modelServiceTier,
+      reasoningEffort: binding.reasoningEffort,
       planMode: binding.planMode,
       restrictedToRepo: binding.restrictedToRepo,
     })) {
@@ -4055,15 +4089,16 @@ async function modelLabel(config: AppConfig, binding: TopicBinding): Promise<str
   if (binding.modelProvider === "claude") {
     return `${providerLabel(binding.modelProvider)} / (provider default)`;
   }
-  return globalModelLabel(config, binding.repoPath);
+  return globalModelLabel(config, binding.repoPath, binding.reasoningEffort);
 }
 
-async function globalModelLabel(config: AppConfig, cwd?: string): Promise<string> {
+async function globalModelLabel(config: AppConfig, cwd?: string, reasoningEffort?: string | null): Promise<string> {
   if (config.defaultModelProvider === "xai" || config.defaultModelProvider === "claude") {
     return `${providerLabel(config.defaultModelProvider)} / (provider default)`;
   }
   try {
     const snapshot = await readCodexConfig(config.codexBin, cwd);
+    if (reasoningEffort) snapshot.reasoningEffort = reasoningEffort;
     return `${providerLabel("openai")} / ${formatConfigModel(snapshot)}`;
   } catch {
     return `${providerLabel("openai")} / (Codex config default)`;
@@ -4238,6 +4273,7 @@ function helpText(): string {
     "/provider - show or set this topic's provider: openai, xai, or claude",
     "/models - list available models for this topic's provider",
     "/model - show or set this topic's model",
+    "/reasoning [level|default] - show or set this topic's Codex reasoning effort",
     "/plan <prompt> - run one agent turn in plan mode",
     "/planon - enable plan mode for ordinary prompts in this topic",
     "/planoff - disable plan mode for ordinary prompts in this topic",
@@ -4289,6 +4325,7 @@ export function telegramCommandMenu(): Array<{ command: string; description: str
     { command: "provider", description: "Set model provider" },
     { command: "models", description: "List available provider models" },
     { command: "model", description: "Show or set this topic model" },
+    { command: "reasoning", description: "Show or set topic reasoning effort" },
     { command: "plan", description: "Run one turn in plan mode" },
     { command: "planon", description: "Enable topic plan mode" },
     { command: "planoff", description: "Disable topic plan mode" },

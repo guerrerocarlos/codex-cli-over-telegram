@@ -2,6 +2,8 @@
 
 ## Current Runtime
 
+- Per-topic `/reasoning` overrides are stored in `topic_bindings.reasoning_effort` (NULL inherits Codex config), passed to exec and app-server, and included in fleet exports. Active turns are unchanged. Implementation verified on 2026-10-16; deployment requires an external shell because the running service has NoNewPrivileges enabled.
+
 - Service: `codex-cli-over-telegram`
 - Workspace: `/home/gnu/codex-cli-over-telegram`
 - Backend: Codex app-server by default

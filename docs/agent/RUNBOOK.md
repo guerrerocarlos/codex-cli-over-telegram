@@ -2,6 +2,10 @@
 
 ## Health Check
 
+Reasoning controls in an OpenAI-bound topic: `/reasoning` shows the selection,
+`/reasoning high` sets it, and `/reasoning default` clears it. Applies next run.
+Verify with `npm run build` and `node --test tests/reasoning.test.mjs`.
+
 ```bash
 curl -fsS http://127.0.0.1:8787/health
 ```

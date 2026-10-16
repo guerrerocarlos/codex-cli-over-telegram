@@ -14,6 +14,7 @@ export interface TopicBinding {
   modelProvider: ModelProvider;
   model: string | null;
   modelServiceTier: string | null;
+  reasoningEffort: string | null;
   planMode: boolean;
   mentionOnly: boolean;
   plainTextOnly: boolean;
@@ -106,6 +107,7 @@ export interface CodexRunRequest {
   modelProvider: ModelProvider;
   model: string | null;
   modelServiceTier: string | null;
+  reasoningEffort: string | null;
   planMode: boolean;
   sandboxMode: SandboxMode;
   restrictedToRepo: boolean;

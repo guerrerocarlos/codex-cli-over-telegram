@@ -108,6 +108,9 @@ Useful commands:
 /provider claude
 /models
 /model
+/reasoning
+/reasoning high
+/reasoning default
 /model gpt-5.5
 /model gpt-5.5 fast
 /model xai:grok-build-0.1
@@ -170,6 +173,15 @@ The bot pins the message that triggers each run and leaves the latest prompt pin
 If the service restarts while runs are queued or active, it requeues those saved runs on startup and posts a notice in each affected Telegram topic. Queued runs start from the saved prompt. Interrupted running runs resume the saved Codex thread with a continue-style prompt instead of replaying the original prompt from scratch.
 
 Use `/compact` to ask Codex app-server to compact the current topic's saved thread. Use `/new` to clear the saved thread id for the topic; the next prompt starts a new Codex thread with clean context. `/status` shows the latest thread context token usage once Codex has reported it for that topic.
+
+## Per-Topic Reasoning
+
+Use `/reasoning` to inspect the current topic's Codex effort, `/reasoning high` to override it,
+or `/reasoning default` to inherit Codex configuration again. Accepted levels are `none`,
+`minimal`, `low`, `medium`, `high`, and `xhigh`; model support varies. This setting applies
+to OpenAI/Codex topics, persists across restarts, and takes effect on the next run (including
+resumed threads). It does not change an already running turn. `/where` and `/status` show
+the next-run selection. Other providers retain their own reasoning behavior.
 
 ## YOLO Mode
 

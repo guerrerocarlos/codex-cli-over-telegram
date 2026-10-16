@@ -78,3 +78,7 @@ export function codexProviderArgs(config: AppConfig, provider: ModelProvider): s
 export function codexServiceTierArgs(serviceTier: string | null): string[] {
   return serviceTier ? ["-c", `service_tier=${JSON.stringify(serviceTier)}`] : [];
 }
+
+export function codexReasoningArgs(effort: string | null): string[] {
+  return effort ? ["-c", `model_reasoning_effort=${JSON.stringify(effort)}`] : [];
+}
