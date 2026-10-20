@@ -493,7 +493,7 @@ export class CodexAppServerBackend implements CodexBackend {
         return tokenUsage ? { type: "token_usage", tokenUsage } : null;
       }
       case "item/agentMessage/delta": {
-        return null;
+        return { type: "work_started" };
       }
       case "item/started": {
         return this.mapItemStarted(params?.item);
@@ -553,7 +553,7 @@ export class CodexAppServerBackend implements CodexBackend {
     if (item.type === "webSearch") {
       return { type: "progress", text: `Web search: ${item.query}` };
     }
-    return null;
+    return { type: "work_started" };
   }
 
   private mapTokenUsage(value: any): ThreadTokenUsageSnapshot | null {

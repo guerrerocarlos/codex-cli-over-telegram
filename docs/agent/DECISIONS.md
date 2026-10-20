@@ -61,3 +61,7 @@ Codex app-server `item/permissions/requestApproval` requests should not be silen
 Turn approval returns the requested permission profile with `scope: "turn"`. Session approval returns it with `scope: "session"`, which is the longest app-server-supported permission grant. Denying or timing out returns an empty permission profile with `scope: "turn"`. This keeps plugin permission escalation visible to the topic while avoiding claims of permanent grants that the protocol does not support.
 
 Connector install/connect approval prompts may arrive as `mcpServer/elicitation/request` rather than `item/permissions/requestApproval`. Non-`telegram_manager` elicitations must be surfaced in Telegram as app approvals instead of being auto-declined. Approving once returns `action: "accept"` for the current prompt; approving for session includes supported persist metadata when the elicitation advertises it.
+
+## 2026-10-20: bounded unsupported-model recovery
+
+Use the existing effective configured model, rather than a hard-coded model list, for one automatic retry of the exact ChatGPT account/model rejection. Persist and audit that explicit selection so a resumed thread cannot silently retain the rejected model. Treat all work signals conservatively; never automatically replay after work or for generic failures. This improves recoverability without retrying customer side effects.

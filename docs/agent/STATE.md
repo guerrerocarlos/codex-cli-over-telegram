@@ -77,3 +77,9 @@
 - Verified health before the fix: `http://127.0.0.1:8787/health` returned `branch=main`, `commitHash=475ec01eb49d214df9fcb14995dc7382afef8af2`, and `deployedAt=2026-07-13T16:52:07Z`.
 - Immediate crash cause: queued cron run `#1252` for binding `#57` / topic `inglesconliza-manager` targeted chat `-1003996402615`, thread `515`; Telegram returned `400: Bad Request: message thread not found` when the restart notice was sent.
 - Code fix: restart-resume notices are now best-effort, and unexpected run-queue task errors are logged instead of escaping the queue chain.
+
+## 2026-10-20 unsupported ChatGPT model fallback
+
+- Added a narrow fallback for the exact unsupported-model ChatGPT rejection, including stale resumed-thread models. It retries once using the effective configured model explicitly, persists the topic selection and records an `unsupported_model_fallback` audit event.
+- Any observed work, output, tool activity, approvals, usage or unknown progress prevents automatic replay. Unrelated errors and unavailable/same fallback models remain failures.
+- Source is implemented and tested; activation requires a safe bridge restart after active workers drain. Do not describe a pushed commit as live behavior.

@@ -20,6 +20,7 @@ import type {
 } from "./types.js";
 import { Storage } from "./storage.js";
 import { RunQueue } from "./runQueue.js";
+import { runWithModelFallback } from "./modelFallback.js";
 import { resolveAllowedRepoPath } from "./pathPolicy.js";
 import { codeBlock, markdownV2Chunks, truncateText } from "./text.js";
 import { commitAll, currentBranch, diffSummary, fullDiff, isGitRepository, pushHead, statusShort } from "./git.js";
@@ -2670,7 +2671,7 @@ async function executeRun(
       details: { runId: run.id, repoPath: binding.repoPath, sandboxMode },
     });
 
-    for await (const event of codex.run({
+    for await (const event of runWithModelFallback(codex, {
       bindingId: binding.id,
       chatId: binding.chatId,
       messageThreadId: binding.messageThreadId,
@@ -2685,6 +2686,16 @@ async function executeRun(
       reasoningEffort: binding.reasoningEffort,
       planMode: binding.planMode,
       restrictedToRepo: binding.restrictedToRepo,
+    }, async () => (await readCodexConfig(config.codexBin, binding.repoPath)).model,
+    async (model, rejectedModel) => {
+      storage.updateBindingModelSelection(binding.id, "openai", model, null);
+      storage.audit({
+        telegramUserId: null,
+        chatId: binding.chatId,
+        messageThreadId: binding.messageThreadId,
+        eventType: "unsupported_model_fallback",
+        details: { runId: run.id, rejectedModel, model, attempt: 1 },
+      });
     })) {
       if (event.type === "started" && event.threadId) {
         runCodexThreadId = event.threadId;

@@ -230,3 +230,11 @@ If a connector approval does not show, inspect logs for declined app-server requ
 journalctl -u codex-cli-over-telegram.service --since '30 minutes ago' --no-pager -o short-iso \
   | rg 'mcpServer/elicitation/request|app-server elicitation approval requested|declining app-server request'
 ```
+
+## Unsupported model recovery
+
+- Run `npm run build` and `node --test tests/modelFallback.test.mjs tests/reasoning.test.mjs` for fallback and existing reasoning regression coverage.
+- The fallback recognizes only `The '<model>' model is not supported when using Codex with a ChatGPT account.` or the exact 400 invalid_request_error envelope. It resolves the repo-effective model via `config/read`; no alternate model is hard-coded.
+- It retries once before observed work and persists the explicit model for later resumes. Check `unsupported_model_fallback` audit entries, final run status and topic model. Quota, network, generic model errors and post-work failures never trigger this retry.
+- Build/push does not activate code already loaded in the bridge. Drain active and queued workers, then follow the existing restart procedure and verify health commit plus a controlled no-tools rejection fixture. Never restart during active work merely to activate this improvement.
+- Until activation, `/model <configured-supported-model>` in the affected topic explicitly changes resumed-thread selection. `/model default` clears the override but can retain a stale resumed-thread model. `/new` clears conversational soft state when a new thread is appropriate.

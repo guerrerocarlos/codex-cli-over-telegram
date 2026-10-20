@@ -129,6 +129,7 @@ export type CodexRunEvent =
       title: string;
       description: string;
     }
+  | { type: "work_started" }
   | { type: "progress"; text: string }
   | { type: "command_started"; text: string }
   | { type: "command_completed"; text: string }
