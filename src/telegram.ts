@@ -1893,6 +1893,11 @@ export async function handleTelegramBridgeRequest(input: {
         topicName: topicDisplayName(binding),
         repoPath: binding.repoPath,
         status: binding.status,
+        sandboxMode: binding.sandboxMode,
+        effectiveSandboxMode: effectiveRunSandboxMode(config, binding),
+        modelProvider: binding.modelProvider,
+        model: binding.model,
+        modelServiceTier: binding.modelServiceTier,
         activeRunId: active?.id ?? null,
         latestRunId: latest?.id ?? null,
         latestRunStatus: latest?.status ?? null,
@@ -1902,6 +1907,81 @@ export async function handleTelegramBridgeRequest(input: {
       ok: true,
       message: topics.length > 0 ? `Found ${topics.length} bound topic(s).` : "No bound topics found.",
       topics,
+    };
+  }
+
+  if (request.action === "set_topic_mode") {
+    const binding = findManagerTargetBinding(storage, request.chatId, request.selector?.trim() ?? "");
+    if (!binding) return { ok: false, message: "Could not find a bound topic in this chat." };
+    const mode = request.sandboxMode;
+    if (mode !== "read-only" && mode !== "workspace-write") {
+      return { ok: false, message: "Mode must be read-only or workspace-write." };
+    }
+    storage.updateBindingMode(binding.id, mode);
+    storage.audit({
+      telegramUserId: null,
+      chatId: binding.chatId,
+      messageThreadId: binding.messageThreadId,
+      eventType: "manager_bridge_set_mode",
+      details: { mode, previousMode: binding.sandboxMode, source: "telegram_manager_mcp" },
+    });
+    return {
+      ok: true,
+      message: `Topic ${topicDisplayName(binding)} mode set to ${mode}; it applies to future runs.`,
+      topicId: binding.messageThreadId,
+      topicName: topicDisplayName(binding),
+      repoPath: binding.repoPath,
+    };
+  }
+
+  if (request.action === "set_topic_model") {
+    const binding = findManagerTargetBinding(storage, request.chatId, request.selector?.trim() ?? "");
+    if (!binding) return { ok: false, message: "Could not find a bound topic in this chat." };
+    const provider = request.modelProvider;
+    const requestedModel = request.model?.trim() ?? "";
+    if (provider !== "openai" && provider !== "xai" && provider !== "claude") {
+      return { ok: false, message: "Provider must be openai, xai, or claude." };
+    }
+    if (!requestedModel) return { ok: false, message: "Model is required." };
+    if (requestedModel.toLowerCase() === "default") {
+      storage.updateBindingModelSelection(binding.id, config.defaultModelProvider, null);
+      storage.audit({
+        telegramUserId: null,
+        chatId: binding.chatId,
+        messageThreadId: binding.messageThreadId,
+        eventType: "manager_bridge_set_model",
+        details: { modelProvider: config.defaultModelProvider, model: null, source: "telegram_manager_mcp" },
+      });
+      return {
+        ok: true,
+        message: "Topic model override cleared; the configured default will be used.",
+        topicId: binding.messageThreadId,
+        topicName: topicDisplayName(binding),
+        repoPath: binding.repoPath,
+      };
+    }
+    const options = await listModelOptions(config, provider);
+    const match = findModelMatch(options, requestedModel, binding.modelProvider, request.modelServiceTier ?? null);
+    if (!match) return { ok: false, message: `Model '${requestedModel}' is not in the configured ${provider} model catalog.` };
+    storage.updateBindingModelSelection(binding.id, match.provider, match.model, match.serviceTier ?? null);
+    storage.audit({
+      telegramUserId: null,
+      chatId: binding.chatId,
+      messageThreadId: binding.messageThreadId,
+      eventType: "manager_bridge_set_model",
+      details: {
+        modelProvider: match.provider,
+        model: match.model,
+        serviceTier: match.serviceTier ?? null,
+        source: "telegram_manager_mcp",
+      },
+    });
+    return {
+      ok: true,
+      message: `Topic model set to ${match.provider}/${match.model}; it applies to future runs.`,
+      topicId: binding.messageThreadId,
+      topicName: topicDisplayName(binding),
+      repoPath: binding.repoPath,
     };
   }
 

@@ -27,6 +27,10 @@ interface ToolCallArguments {
   dueAt?: unknown;
   includeClosed?: unknown;
   limit?: unknown;
+  mode?: unknown;
+  provider?: unknown;
+  model?: unknown;
+  serviceTier?: unknown;
 }
 
 interface BridgeConfig {
@@ -101,10 +105,40 @@ async function handleLine(line: string): Promise<void> {
             },
             {
               name: "list_topics",
-              description: "List bound Telegram topics in this chat, including their topic ids, names, repos, and run status.",
+              description: "List bound topics, current model and sandbox mode, plus run status.",
               inputSchema: {
                 type: "object",
                 properties: {},
+                additionalProperties: false,
+              },
+            },
+            {
+              name: "set_topic_mode",
+              description:
+                "Set a bound topic to read-only or repo-scoped workspace-write. Changes apply to future runs; unrestricted danger-full-access is unavailable here.",
+              inputSchema: {
+                type: "object",
+                properties: {
+                  topic: { type: "string", description: "Topic id, name, or repo folder." },
+                  mode: { type: "string", enum: ["read-only", "workspace-write"] },
+                },
+                required: ["topic", "mode"],
+                additionalProperties: false,
+              },
+            },
+            {
+              name: "set_topic_model",
+              description:
+                "Select a provider/model for future runs in a bound topic. Use model 'default' to clear the topic override. Model names are validated against configured provider catalogs.",
+              inputSchema: {
+                type: "object",
+                properties: {
+                  topic: { type: "string", description: "Topic id, name, or repo folder." },
+                  provider: { type: "string", enum: ["openai", "xai", "claude"] },
+                  model: { type: "string" },
+                  serviceTier: { type: "string" },
+                },
+                required: ["topic", "provider", "model"],
                 additionalProperties: false,
               },
             },
@@ -324,7 +358,9 @@ async function callTool(params: any): Promise<unknown> {
     toolName !== "create_work_item" &&
     toolName !== "list_work_items" &&
     toolName !== "update_work_item" &&
-    toolName !== "complete_work_item"
+    toolName !== "complete_work_item" &&
+    toolName !== "set_topic_mode" &&
+    toolName !== "set_topic_model"
   ) {
     throw new Error(`Unknown tool: ${params?.name ?? "missing"}`);
   }
@@ -358,6 +394,27 @@ async function callTool(params: any): Promise<unknown> {
     body.selector = topic;
     if (toolName === "read_topic_messages" && typeof args.limit === "number" && Number.isFinite(args.limit)) {
       body.limit = args.limit;
+    }
+  }
+
+  if (toolName === "set_topic_mode" || toolName === "set_topic_model") {
+    const topic = typeof args.topic === "string" ? args.topic.trim() : "";
+    if (!topic) throw new Error(`${toolName} requires a non-empty topic argument.`);
+    body.selector = topic;
+    if (toolName === "set_topic_mode") {
+      if (args.mode !== "read-only" && args.mode !== "workspace-write") {
+        throw new Error("mode must be read-only or workspace-write.");
+      }
+      body.sandboxMode = args.mode;
+    } else {
+      if (args.provider !== "openai" && args.provider !== "xai" && args.provider !== "claude") {
+        throw new Error("provider must be openai, xai, or claude.");
+      }
+      const model = typeof args.model === "string" ? args.model.trim() : "";
+      if (!model) throw new Error("model is required.");
+      body.modelProvider = args.provider;
+      body.model = model;
+      if (typeof args.serviceTier === "string" && args.serviceTier.trim()) body.modelServiceTier = args.serviceTier.trim();
     }
   }
 

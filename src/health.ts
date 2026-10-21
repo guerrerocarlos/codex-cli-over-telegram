@@ -13,7 +13,9 @@ export type BridgeAction =
   | "create_work_item"
   | "list_work_items"
   | "update_work_item"
-  | "complete_work_item";
+  | "complete_work_item"
+  | "set_topic_mode"
+  | "set_topic_model";
 
 export interface BridgeRequest {
   action: BridgeAction;
@@ -31,6 +33,10 @@ export interface BridgeRequest {
   dueAt?: string;
   includeClosed?: boolean;
   limit?: number;
+  sandboxMode?: "read-only" | "workspace-write";
+  modelProvider?: "openai" | "xai" | "claude";
+  model?: string;
+  modelServiceTier?: string;
 }
 
 export interface BridgeResult {
@@ -187,7 +193,9 @@ function normalizeBridgeRequest(url: string, value: unknown): BridgeRequest | nu
     action !== "create_work_item" &&
     action !== "list_work_items" &&
     action !== "update_work_item" &&
-    action !== "complete_work_item"
+    action !== "complete_work_item" &&
+    action !== "set_topic_mode" &&
+    action !== "set_topic_model"
   ) {
     return null;
   }
@@ -235,5 +243,13 @@ function normalizeBridgeRequest(url: string, value: unknown): BridgeRequest | nu
   if (typeof record.limit === "number" && Number.isFinite(record.limit)) {
     bridgeRequest.limit = record.limit;
   }
+  if (record.sandboxMode === "read-only" || record.sandboxMode === "workspace-write") {
+    bridgeRequest.sandboxMode = record.sandboxMode;
+  }
+  if (record.modelProvider === "openai" || record.modelProvider === "xai" || record.modelProvider === "claude") {
+    bridgeRequest.modelProvider = record.modelProvider;
+  }
+  if (typeof record.model === "string") bridgeRequest.model = record.model;
+  if (typeof record.modelServiceTier === "string") bridgeRequest.modelServiceTier = record.modelServiceTier;
   return bridgeRequest;
 }

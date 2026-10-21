@@ -61,6 +61,24 @@ systemctl status codex-cli-over-telegram.service --no-pager
 
 The production unit is the system service in `/etc/systemd/system/`. A disabled or inactive `systemctl --user status codex-cli-over-telegram.service` result does not describe the production bot.
 
+## Manager Topic Settings and Scoped Maintenance
+
+The `telegram_manager` MCP exposes `set_topic_mode` and `set_topic_model` for topics bound to the current Telegram chat. Modes are limited to `read-only` and `workspace-write`; unrestricted `danger-full-access` is not available through the manager bridge. Model selections are checked against the configured provider catalog. Both settings apply to future runs. `list_topics` reports the stored and effective sandbox mode plus topic model preference.
+
+To start a Codex session with writes scoped to this checkout:
+
+```bash
+scripts/codex-service.sh codex
+```
+
+One-time setup for narrowly allowing this account to restart only the bridge service:
+
+```bash
+scripts/codex-service.sh grant-reload
+```
+
+After setup, `scripts/codex-service.sh reload` checks for a clean `main` checkout synchronized with `origin/main`, installs dependencies, runs tests and builds, refuses to restart while queued/running jobs exist, restarts the exact system service, and checks `/health`. It does not pull or deploy uncommitted changes. It requires the service checkout owner (`gnu`) and sudo. This script does not alter the service during setup.
+
 ## Approve a New Telegram User
 
 When an unknown user messages the bot in an approved chat, the bot sends an approval card to the configured management topic. An already approved operator must select **Approve user**. The user ID is appended to `ALLOWED_TELEGRAM_USER_IDS_FILE` and is active immediately.
