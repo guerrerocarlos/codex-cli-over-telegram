@@ -7,11 +7,11 @@ sudoers_file="/etc/sudoers.d/codex-cli-over-telegram-restart"
 
 usage() {
   cat <<'EOF'
-Usage: scripts/codex-service.sh <codex|grant-reload|reload>
+Usage: scripts/codex-service.sh <codex|grant-reload|update>
 
   codex       Start Codex with write access scoped to this repository.
   grant-reload Install a sudo rule allowing only restart of this exact service.
-  reload      Run tests/build, refuse dirty or active-run states, then restart and verify health.
+  update      Fast-forward from origin/main, run tests/build, check active runs, restart, and verify health.
 EOF
 }
 
@@ -36,7 +36,7 @@ case "${1:-}" in
     sudo visudo -cf "$sudoers_file"
     echo "Installed narrow permission: this user can restart only $service through systemctl."
     ;;
-  reload)
+  update|reload)
     shift
     if [[ $# -ne 0 ]]; then usage; exit 2; fi
     if [[ "$(id -un)" != "gnu" ]]; then echo "Run from the gnu account that owns the service checkout." >&2; exit 1; fi
@@ -47,10 +47,12 @@ case "${1:-}" in
     fi
     if [[ "$(git -C "$repo_dir" branch --show-current)" != "main" ]]; then echo "Refusing service reload: expected the main branch." >&2; exit 1; fi
     git -C "$repo_dir" fetch --quiet origin main
-    if [[ "$(git -C "$repo_dir" rev-parse HEAD)" != "$(git -C "$repo_dir" rev-parse origin/main)" ]]; then
-      echo "Refusing service reload: checkout differs from origin/main. Review and update it first." >&2
+    read -r ahead behind < <(git -C "$repo_dir" rev-list --left-right --count HEAD...origin/main)
+    if [[ "$ahead" -ne 0 ]]; then
+      echo "Refusing service update: local main has commits not present on origin/main." >&2
       exit 1
     fi
+    if [[ "$behind" -gt 0 ]]; then git -C "$repo_dir" merge --ff-only origin/main; fi
     npm ci
     npm test
     npm run build

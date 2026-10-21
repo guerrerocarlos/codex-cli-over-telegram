@@ -77,7 +77,7 @@ One-time setup for narrowly allowing this account to restart only the bridge ser
 scripts/codex-service.sh grant-reload
 ```
 
-After setup, `scripts/codex-service.sh reload` checks for a clean `main` checkout synchronized with `origin/main`, installs dependencies, runs tests and builds, refuses to restart while queued/running jobs exist, restarts the exact system service, and checks `/health`. It does not pull or deploy uncommitted changes. It requires the service checkout owner (`gnu`) and sudo. This script does not alter the service during setup.
+After setup, `scripts/codex-service.sh update` requires a clean `main` checkout, fast-forwards it from `origin/main`, installs dependencies, runs tests and builds, refuses to restart while queued/running jobs exist, restarts the exact system service, and checks `/health`. It refuses local commits that have not been pushed and never deploys uncommitted changes. `reload` is an alias. It requires the service checkout owner (`gnu`) and sudo. The one-time permission setup does not alter the service.
 
 ## Approve a New Telegram User
 
