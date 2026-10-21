@@ -79,3 +79,18 @@ test('app-server applies override and resolves default for resumed threads', asy
   assert.deepEqual(codexReasoningArgs(null), []);
   assert.deepEqual(codexReasoningArgs('high'), ['-c', 'model_reasoning_effort="high"']);
 });
+
+test('app-server passes every Telegram manager override with its config flag', async () => {
+  const backend = new CodexAppServerBackend(config);
+  const events = [];
+  for await (const event of backend.run({ ...bindingInput(1), bindingId: 1,
+    prompt: 'test', codexThreadId: null, model: null, modelServiceTier: null,
+    reasoningEffort: null, approvalPolicy: 'never', restrictedToRepo: false, planMode: false })) events.push(event);
+  assert.equal(events.at(-1).type, 'completed', JSON.stringify(events));
+  const actual = JSON.parse(events.at(-1).finalMessage);
+  const managerOverrides = actual.args.filter((arg) => arg.startsWith('mcp_servers.telegram_manager.'));
+  assert.equal(managerOverrides.length, 11);
+  for (const override of managerOverrides) {
+    assert.equal(actual.args[actual.args.indexOf(override) - 1], '-c', override);
+  }
+});

@@ -425,7 +425,9 @@ export class CodexAppServerBackend implements CodexBackend {
           "mcp_servers.telegram_manager.tools.update_work_item.approval_mode=\"auto\"",
           "-c",
           "mcp_servers.telegram_manager.tools.complete_work_item.approval_mode=\"auto\"",
+          "-c",
           "mcp_servers.telegram_manager.tools.set_topic_mode.approval_mode=\"auto\"",
+          "-c",
           "mcp_servers.telegram_manager.tools.set_topic_model.approval_mode=\"auto\"",
         ];
     return {

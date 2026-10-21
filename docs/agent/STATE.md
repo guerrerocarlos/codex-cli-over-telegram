@@ -2,6 +2,8 @@
 
 ## Current Runtime
 
+- 2026-10-21: the manager MCP app-server arguments require one `-c` flag for every override. Two missing flags made manager-topic runs exit immediately with code 2 after the 0.163.0 Codex CLI upgrade. Regression coverage now verifies the complete argument sequence.
+
 - Per-topic `/reasoning` overrides are stored in `topic_bindings.reasoning_effort` (NULL inherits Codex config), passed to exec and app-server, and included in fleet exports. Active turns are unchanged. Implementation verified on 2026-10-16; deployment requires an external shell because the running service has NoNewPrivileges enabled.
 
 - Service: `codex-cli-over-telegram`
