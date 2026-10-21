@@ -735,13 +735,18 @@ export class Storage {
     return result.changes > 0;
   }
 
-  prepareInterruptedRunsForResume(): InterruptedRunRecord[] {
-    const rows = this.db
+  prepareInterruptedRunsForResume(supersededRunIds: ReadonlySet<number> = new Set()): InterruptedRunRecord[] {
+    const excludedIds = [...supersededRunIds].filter((id) => Number.isSafeInteger(id) && id > 0);
+    const exclusion = excludedIds.length > 0
+      ? ` AND id NOT IN (${excludedIds.map(() => "?").join(",")})`
+      : "";
+    const interruptedRows = this.db
       .prepare("SELECT * FROM runs WHERE status IN ('queued', 'running') ORDER BY id ASC")
       .all() as RunRow[];
-    if (rows.length === 0) {
+    if (interruptedRows.length === 0) {
       return [];
     }
+    const rows = interruptedRows.filter((row) => !excludedIds.includes(row.id));
 
     const timestamp = now();
     const tx = this.db.transaction(() => {
@@ -754,15 +759,16 @@ export class Storage {
               completed_at = NULL,
               exit_code = NULL,
               error_message = NULL
-          WHERE status IN ('queued', 'running')
+          WHERE status IN ('queued', 'running')${exclusion}
         `,
         )
-        .run();
+        .run(...excludedIds);
       this.db.prepare("DELETE FROM repo_locks").run();
       this.db.prepare("UPDATE topic_bindings SET status = 'idle', updated_at = ?").run(timestamp);
     });
     tx();
 
+    if (rows.length === 0) return [];
     return rows.map((row) => ({
       ...mapRun({
         ...row,

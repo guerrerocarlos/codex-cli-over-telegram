@@ -17,6 +17,7 @@ export interface AppConfig {
   approvalTelegramMessageThreadId: number;
   allowedRepoRoots: string[];
   databasePath: string;
+  supersededRunIds: Set<number>;
   codexBin: string;
   codexBackend: CodexBackendKind;
   defaultModelProvider: ModelProvider;
@@ -232,6 +233,7 @@ export function loadConfig(): AppConfig {
     approvalTelegramMessageThreadId: optionalInteger("TELEGRAM_APPROVAL_MESSAGE_THREAD_ID") ?? 0,
     allowedRepoRoots: parseRepoRoots(),
     databasePath,
+    supersededRunIds: parseNumberList("CODEX_SUPERSEDED_RUN_IDS"),
     codexBin: optional("CODEX_BIN", "codex"),
     codexBackend: parseCodexBackend(),
     defaultModelProvider: parseModelProvider("DEFAULT_MODEL_PROVIDER", "openai"),

@@ -14,7 +14,7 @@ import { CronScheduler } from "./cronScheduler.js";
 async function main(): Promise<void> {
   const config = loadConfig();
   const storage = new Storage(config.databasePath);
-  const interruptedRuns = storage.prepareInterruptedRunsForResume();
+  const interruptedRuns = storage.prepareInterruptedRunsForResume(config.supersededRunIds);
   const queue = new RunQueue(config.maxParallelRuns);
   const openaiBackend =
     config.codexBackend === "app-server"

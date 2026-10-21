@@ -71,13 +71,13 @@ To start a Codex session with writes scoped to this checkout:
 scripts/codex-service.sh codex
 ```
 
-One-time setup for narrowly allowing this account to restart only the bridge service:
+One-command server setup and guarded update (run from the `gnu` account in a normal host terminal where `sudo` works):
 
 ```bash
-scripts/codex-service.sh grant-reload
+scripts/codex-service.sh setup-and-update
 ```
 
-After setup, `scripts/codex-service.sh update` requires a clean `main` checkout, fast-forwards it from `origin/main`, installs dependencies, runs tests and builds, refuses to restart while queued/running jobs exist, restarts the exact system service, and checks `/health`. It refuses local commits that have not been pushed and never deploys uncommitted changes. `reload` is an alias. It requires the service checkout owner (`gnu`) and sudo. The one-time permission setup does not alter the service.
+The command installs a root-owned fixed helper and a sudo rule limited to its `prepare` and `restart` operations. It fast-forwards a clean `main` checkout from `origin/main`, runs tests/build, preserves and reapplies the known `src/fleetSnapshot.ts` local edit, ignores only superseded run225 for restart preflight and startup recovery, restarts the exact service, and requires `/health` to report the deployed commit. It refuses other dirty files and local commits not pushed to origin. It never replays run225 or changes its database row. `update` can be run later after setup. `codex` separately launches a repo-scoped writable Codex session.
 
 ## Approve a New Telegram User
 
