@@ -250,7 +250,7 @@ export function loadConfig(): AppConfig {
     claudeModels: parseStringList("CLAUDE_MODELS", "sonnet,opus,fable"),
     defaultSandboxMode: parseSandboxMode(),
     alwaysYoloMode: parseBoolean("CODEX_ALWAYS_YOLO", false),
-    maxParallelRuns: parseInteger("MAX_PARALLEL_RUNS", 4),
+    maxParallelRuns: parseInteger("MAX_PARALLEL_RUNS", 10),
     maxTelegramMessageChars: parseInteger("MAX_TELEGRAM_MESSAGE_CHARS", 3500),
     telegramSendIntervalMs: parseInteger("TELEGRAM_SEND_INTERVAL_MS", 3500),
     telegramAgentStreaming: parseBoolean("TELEGRAM_AGENT_STREAMING", true),
