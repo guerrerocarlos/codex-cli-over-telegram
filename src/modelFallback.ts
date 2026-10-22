@@ -1,6 +1,6 @@
 import type { CodexBackend, CodexRunEvent, CodexRunRequest } from "./types.js";
 
-// Match only the observed pre-execution account/model rejection, not generic 400s.
+// Match only pre-execution model-availability rejections, not generic API failures.
 export function rejectedChatGptModel(error: string): string | null {
   let message = error;
   try {
@@ -10,7 +10,12 @@ export function rejectedChatGptModel(error: string): string | null {
   } catch {
     // app-server can expose the inner message without its transport envelope.
   }
-  return /^The '([^']+)' model is not supported when using Codex with a ChatGPT account\.$/.exec(message)?.[1] ?? null;
+  return (
+    /^The '([^']+)' model is not supported when using Codex with a ChatGPT account\.$/.exec(message)?.[1] ??
+    /^The model '([^']+)' does not exist or you do not have access to it\.$/.exec(message)?.[1] ??
+    /^Model '([^']+)' is not available\.$/.exec(message)?.[1] ??
+    null
+  );
 }
 
 export async function* runWithModelFallback(

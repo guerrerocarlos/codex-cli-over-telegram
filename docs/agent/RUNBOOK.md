@@ -77,7 +77,17 @@ One-command server setup and guarded update (run from the `gnu` account in a nor
 scripts/codex-service.sh setup-and-update
 ```
 
-The command installs a root-owned fixed helper and a sudo rule limited to its `prepare` and `restart` operations. It fast-forwards a clean `main` checkout from `origin/main`, runs tests/build, preserves and reapplies the known `src/fleetSnapshot.ts` local edit, ignores only superseded run225 for restart preflight and startup recovery, restarts the exact service, and requires `/health` to report the deployed commit. It refuses other dirty files and local commits not pushed to origin. It never replays run225 or changes its database row. `update` can be run later after setup. `codex` separately launches a repo-scoped writable Codex session.
+The command installs a root-owned fixed helper and a sudo rule limited to its `prepare`, `restart`, and Codex CLI `update-cli` operations. It fast-forwards a clean `main` checkout from `origin/main`, runs tests/build, preserves and reapplies the known `src/fleetSnapshot.ts` local edit, ignores only superseded run225 for restart preflight and startup recovery, restarts the exact service, and requires `/health` to report the deployed commit. It refuses other dirty files and local commits not pushed to origin. It never replays run225 or changes its database row. `update` can be run later after setup. `codex` separately launches a repo-scoped writable Codex session.
+
+## Nightly Codex CLI update
+
+`codex-cli-over-telegram-cli-update.timer` runs at 03:45 local time, after the fleet backup. It exits cleanly without updating when a non-superseded run is queued or running. When idle, it runs `codex update`; if the version changes, it checks again for active runs, restarts through the root-owned maintenance helper, and requires `/health` to report both the checked-out commit and `telegramBotStarted: true`.
+
+```bash
+systemctl list-timers codex-cli-over-telegram-cli-update.timer
+systemctl status codex-cli-over-telegram-cli-update.service --no-pager
+journalctl -u codex-cli-over-telegram-cli-update.service -n 100 --no-pager
+```
 
 ## Approve a New Telegram User
 
@@ -252,7 +262,7 @@ journalctl -u codex-cli-over-telegram.service --since '30 minutes ago' --no-page
 ## Unsupported model recovery
 
 - Run `npm run build` and `node --test tests/modelFallback.test.mjs tests/reasoning.test.mjs` for fallback and existing reasoning regression coverage.
-- The fallback recognizes only `The '<model>' model is not supported when using Codex with a ChatGPT account.` or the exact 400 invalid_request_error envelope. It resolves the repo-effective model via `config/read`; no alternate model is hard-coded.
+- The fallback recognizes the exact ChatGPT “not supported”, “does not exist or you do not have access”, and “is not available” model rejections. It resolves the repo-effective model via `config/read`; no alternate model is hard-coded.
 - It retries once before observed work and persists the explicit model for later resumes. Check `unsupported_model_fallback` audit entries, final run status and topic model. Quota, network, generic model errors and post-work failures never trigger this retry.
 - Build/push does not activate code already loaded in the bridge. Drain active and queued workers, then follow the existing restart procedure and verify health commit plus a controlled no-tools rejection fixture. Never restart during active work merely to activate this improvement.
 - Until activation, `/model <configured-supported-model>` in the affected topic explicitly changes resumed-thread selection. `/model default` clears the override but can retain a stale resumed-thread model. `/new` clears conversational soft state when a new thread is appropriate.

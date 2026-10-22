@@ -1,0 +1,10 @@
+[Unit]
+Description=Nightly guarded Codex CLI update
+
+[Timer]
+OnCalendar=*-*-* 03:45:00
+Persistent=true
+Unit=codex-cli-over-telegram-cli-update.service
+
+[Install]
+WantedBy=timers.target

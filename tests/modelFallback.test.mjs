@@ -23,6 +23,8 @@ async function exercise(first, options = {}) {
 test('strict rejection matching supports message and observed envelope only', () => {
   assert.equal(rejectedChatGptModel(error), 'gpt-5.5');
   assert.equal(rejectedChatGptModel(message), 'gpt-5.5');
+  assert.equal(rejectedChatGptModel("The model 'gpt-6-luna' does not exist or you do not have access to it."), 'gpt-6-luna');
+  assert.equal(rejectedChatGptModel("Model 'gpt-6-luna' is not available."), 'gpt-6-luna');
   for (const value of ['HTTP 400', 'quota exceeded', message + ' other text', JSON.stringify({ type: 'error', status: 500, error: { type: 'invalid_request_error', message } })]) assert.equal(rejectedChatGptModel(value), null);
 });
 test('stale resumed model retries once explicitly, preserves newly issued thread, persists selection', async () => {

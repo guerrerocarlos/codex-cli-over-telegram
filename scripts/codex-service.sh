@@ -11,7 +11,7 @@ usage() {
 Usage: scripts/codex-service.sh <codex|grant-reload|update|setup-and-update>
 
   codex       Start Codex with write access scoped to this repository.
-  grant-reload Install a sudo rule allowing only restart of this exact service.
+  grant-reload Install a sudo rule allowing guarded service restart and Codex CLI update.
   update      Fast-forward from origin/main, run tests/build, check active runs, restart, and verify health.
   setup-and-update Install narrow access and perform the guarded update.
 EOF
@@ -70,12 +70,16 @@ case "${1:-}" in
     mv -f "$tmp" "$deploy_file"
     /usr/bin/systemctl restart codex-cli-over-telegram.service
     ;;
+  update-cli)
+    [[ $# -eq 1 ]] || exit 2
+    /usr/bin/codex update
+    ;;
   *) exit 2 ;;
 esac
 ROOT_HELPER
     bash -n "$temp_helper"
     user="$(id -un)"
-    rule="$user ALL=(root) NOPASSWD: $helper_path prepare, $helper_path restart"
+    rule="$user ALL=(root) NOPASSWD: $helper_path prepare, $helper_path restart, $helper_path update-cli"
     printf '%s\n' "$rule" > "$temp_rule"
     visudo -cf "$temp_rule"
     sudo install -o root -g root -m 0755 "$temp_helper" "$helper_path"
@@ -83,7 +87,7 @@ ROOT_HELPER
     sudo visudo -cf "$sudoers_file"
     rm -f "$temp_rule" "$temp_helper"
     trap - EXIT
-    echo "Installed narrow permission: this user can restart only $service through systemctl."
+    echo "Installed narrow permission: this user can restart $service and update the Codex CLI through the fixed helper."
     ;;
   setup-and-update)
     "$0" grant-reload

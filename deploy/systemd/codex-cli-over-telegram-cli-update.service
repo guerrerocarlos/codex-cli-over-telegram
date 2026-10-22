@@ -1,0 +1,16 @@
+[Unit]
+Description=Update Codex CLI when Telegram bridge is idle
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=gnu
+Group=gnu
+WorkingDirectory=/home/gnu/codex-cli-over-telegram
+Environment=HOME=/home/gnu
+Environment=PATH=/home/gnu/.local/bin:/home/gnu/.grok/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/home/gnu/codex-cli-over-telegram/scripts/update-codex-cli.sh
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/home/gnu/.codex /home/gnu/codex-cli-over-telegram
