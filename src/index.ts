@@ -10,6 +10,7 @@ import { createTelegramBot, handleTelegramBridgeRequest, resumeInterruptedRuns, 
 import { startHealthServer } from "./health.js";
 import { logger } from "./logger.js";
 import { CronScheduler } from "./cronScheduler.js";
+import { recoverJournalRepositories } from "./journal.js";
 
 async function main(): Promise<void> {
   const config = loadConfig();
@@ -79,6 +80,19 @@ async function main(): Promise<void> {
       logger.info("telegram bot started", { botUsername: info.username });
       queueMicrotask(() => {
         void resumeInterruptedRuns(bot, config, storage, codex, queue, interruptedRuns);
+        void recoverJournalRepositories(storage).then((results) => {
+          for (const result of results) {
+            if (/failed|skipped/i.test(result.message)) {
+              logger.warn("journal recovery check", { ...result });
+            } else {
+              logger.info("journal recovery check", { ...result });
+            }
+          }
+        }).catch((error) => {
+          logger.warn("journal recovery failed", {
+            error: error instanceof Error ? error.message : String(error),
+          });
+        });
       });
     },
   });

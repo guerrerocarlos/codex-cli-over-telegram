@@ -43,6 +43,7 @@ import {
   type StoredContextFile,
   type TelegramFileRef,
 } from "./telegramMedia.js";
+import { archiveJournalMedia, isJournalMedia, loadJournalConfig, type JournalConfig } from "./journal.js";
 
 export interface TopicRef {
   chatId: number;
@@ -60,6 +61,7 @@ interface TelegramFileLike {
   file_size?: number;
   file_name?: string;
   mime_type?: string;
+  duration?: number;
 }
 
 interface TelegramPhotoLike extends TelegramFileLike {
@@ -1225,14 +1227,27 @@ async function handleFileMessage(
     return;
   }
 
-  const instruction = captionInstruction(ctx);
-  if (instruction.unsupportedCommand) {
-    await reply(ctx, "Send bot commands as text messages. Use a plain caption as the instruction for uploaded files.", config);
+  const fileRefs = extractTelegramFileRefs(ctx);
+  if (fileRefs.length === 0) {
     return;
   }
 
-  const fileRefs = extractTelegramFileRefs(ctx);
-  if (fileRefs.length === 0) {
+  let journalConfig: JournalConfig | null;
+  try {
+    journalConfig = await loadJournalConfig(binding.repoPath);
+  } catch (error) {
+    await reply(ctx, `Could not load journal configuration:\n${codeBlock(errorMessage(error))}`, config);
+    return;
+  }
+  const journalFiles = journalConfig ? fileRefs.filter((fileRef) => isJournalMedia(fileRef, journalConfig)) : [];
+  if (journalConfig && journalFiles.length > 0) {
+    await handleJournalMediaMessage(ctx, config, storage, bot, binding, journalConfig, journalFiles);
+    return;
+  }
+
+  const instruction = captionInstruction(ctx);
+  if (instruction.unsupportedCommand) {
+    await reply(ctx, "Send bot commands as text messages. Use a plain caption as the instruction for uploaded files.", config);
     return;
   }
 
@@ -1303,6 +1318,102 @@ async function handleFileMessage(
     );
   } catch (error) {
     await reply(ctx, `Could not save Telegram upload:\n${codeBlock(errorMessage(error))}`, config);
+  }
+}
+
+async function handleJournalMediaMessage(
+  ctx: Context,
+  config: AppConfig,
+  storage: Storage,
+  bot: Bot,
+  binding: TopicBinding,
+  journalConfig: JournalConfig,
+  fileRefs: TelegramFileRef[],
+): Promise<void> {
+  await reply(ctx, "Journal media received. Archiving and transcribing it now.", config);
+  const telegramMessageId = ctx.message?.message_id ?? null;
+  if (telegramMessageId === null) {
+    await reply(ctx, "Could not archive journal media because the Telegram message ID is missing.", config);
+    return;
+  }
+  const capturedAt = new Date((ctx.message?.date ?? Math.floor(Date.now() / 1000)) * 1000);
+  const authorUsername = ctx.from?.username ? `@${ctx.from.username}` : null;
+
+  for (const fileRef of fileRefs) {
+    let storedFile: StoredContextFile | null = null;
+    try {
+      storedFile = await saveTelegramFileToContext(
+        bot,
+        config,
+        binding.repoPath,
+        fileRef,
+        telegramMessageId,
+      );
+      const result = await archiveJournalMedia({
+        appConfig: config,
+        journalConfig,
+        repoPath: binding.repoPath,
+        storedFile,
+        fileRef,
+        telegramMessageId,
+        capturedAt,
+        authorUsername,
+      });
+      storage.audit({
+        telegramUserId: ctx.from?.id ?? null,
+        chatId: binding.chatId,
+        messageThreadId: binding.messageThreadId,
+        eventType: result.duplicate ? "telegram_journal_media_duplicate" : "telegram_journal_media_archived",
+        details: {
+          kind: fileRef.kind,
+          entryPath: result.entryPath,
+          transcriptPath: result.transcriptPath,
+          commitHash: result.commitHash,
+          pushed: result.pushed,
+          transcriptionError: result.transcriptionError,
+          pushError: result.pushError,
+        },
+      });
+
+      const lines = result.duplicate
+        ? ["Journal media was already archived.", "", `Entry: ${result.entryPath}`]
+        : [
+            "Journal media archived.",
+            "",
+            `Entry: ${result.entryPath}`,
+            result.transcriptPath ? `Transcript: ${result.transcriptPath}` : "Transcript: unavailable",
+            result.commitHash ? `Commit: ${result.commitHash}` : null,
+            result.pushed ? "GitHub: pushed" : "GitHub: push pending",
+          ].filter((line): line is string => line !== null);
+      if (result.transcriptionError) {
+        lines.push("", `Transcription failed and can be retried: ${result.transcriptionError}`);
+      }
+      if (result.pushError) {
+        lines.push("", `Push failed and the local commit was retained: ${result.pushError}`);
+      }
+      await reply(ctx, lines.join("\n"), config);
+    } catch (error) {
+      storage.audit({
+        telegramUserId: ctx.from?.id ?? null,
+        chatId: binding.chatId,
+        messageThreadId: binding.messageThreadId,
+        eventType: "telegram_journal_media_failed",
+        details: {
+          kind: fileRef.kind,
+          stagedPath: storedFile?.relativePath ?? null,
+          error: errorMessage(error),
+        },
+      });
+      await reply(
+        ctx,
+        [
+          "Could not archive journal media.",
+          storedFile ? `The raw upload remains staged at ${storedFile.relativePath}.` : null,
+          codeBlock(errorMessage(error)),
+        ].filter((line): line is string => line !== null).join("\n"),
+        config,
+      );
+    }
   }
 }
 
@@ -3938,6 +4049,7 @@ function fileRef(kind: string, value: TelegramFileLike, fallbackName: string | n
     originalName: value.file_name ?? fallbackName,
     mimeType: value.mime_type ?? null,
     fileSize: value.file_size ?? null,
+    durationSeconds: value.duration ?? null,
   };
 }
 

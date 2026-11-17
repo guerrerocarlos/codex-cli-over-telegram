@@ -113,6 +113,20 @@ systemctl start codex-cli-over-telegram-deploy.service
 
 The deploy script restarts the system unit and waits for `/health` to return `ok: true` with `telegramBotStarted: true`.
 
+## Verify Automatic Media Journaling
+
+The LIFE `Journal` repository opts in through `/home/gnu/life-manager/Journal/journal.config.json`.
+
+```bash
+npm run build
+node --test tests/journal.test.mjs
+node --test tests/*.test.mjs
+```
+
+For a live check, send a voice message or video of at most 20 MB to the LIFE `Journal` topic. Confirm the bot reports an entry path, commit hash, and `GitHub: pushed`. The entry must contain the raw media, `metadata.json`, and `transcript.md`, with matching `entries/index.json` and `indexes/YYYY/MM.md` records. Then send an ordinary text message and confirm that it starts the normal Codex flow.
+
+Transcription failure still archives and commits the raw media with failure metadata. Re-sending the same Telegram media retries a failed entry. A push failure leaves the local commit intact, and startup recovery retries it once the repository is otherwise clean. Recovery only commits journal-generated paths and stops when unrelated changes exist.
+
 ## Inspect Active Runs
 
 ```bash

@@ -847,6 +847,13 @@ export class Storage {
     return rows.map(mapBinding);
   }
 
+  listBindings(): TopicBinding[] {
+    const rows = this.db
+      .prepare("SELECT * FROM topic_bindings ORDER BY chat_id, message_thread_id")
+      .all() as BindingRow[];
+    return rows.map(mapBinding);
+  }
+
   updateBindingMode(bindingId: number, sandboxMode: SandboxMode): void {
     this.db
       .prepare("UPDATE topic_bindings SET sandbox_mode = ?, updated_at = ? WHERE id = ?")

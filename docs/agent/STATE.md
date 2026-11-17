@@ -6,6 +6,8 @@
 
 - 2026-10-22: a nightly `codex-cli-over-telegram-cli-update.timer` updates the Codex CLI only when no non-superseded run is queued or running. A changed CLI version causes a second run check, guarded bridge restart, and health verification. OpenAI unavailable-model rejections retry once before work with the current configured default model and persist that selection for later runs.
 
+- 2026-11-17: repositories can opt into automatic media journaling with `journal.config.json`. The LIFE `Journal` topic archives configured voice/audio/video messages with raw media, transcript, metadata, and indexes, then creates one regular Git commit per media message and pushes it. Journal media does not trigger Codex, while standalone text still does. Startup recovery completes safe journal-only interrupted writes and retries pending pushes.
+
 - Per-topic `/reasoning` overrides are stored in `topic_bindings.reasoning_effort` (NULL inherits Codex config), passed to exec and app-server, and included in fleet exports. Active turns are unchanged. Implementation verified on 2026-10-16; deployment requires an external shell because the running service has NoNewPrivileges enabled.
 
 - Service: `codex-cli-over-telegram`

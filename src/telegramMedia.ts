@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { constants as fsConstants } from "node:fs";
-import { access, mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { Bot } from "grammy";
 import type { AppConfig } from "./config.js";
@@ -12,6 +12,7 @@ export interface TelegramFileRef {
   originalName: string | null;
   mimeType: string | null;
   fileSize: number | null;
+  durationSeconds: number | null;
 }
 
 export interface StoredContextFile {
@@ -98,6 +99,42 @@ export async function transcribeStoredAudio(config: AppConfig, storedFile: Store
   }
 
   const transcriptionFilePath = await ensureTranscriptionFormat(config, storedFile.absolutePath);
+  return transcribeFile(config, transcriptionFilePath);
+}
+
+export async function transcribeStoredJournalMedia(
+  config: AppConfig,
+  storedFile: StoredContextFile,
+  extractVideoAudio: boolean,
+): Promise<string> {
+  if (!extractVideoAudio) {
+    return transcribeStoredAudio(config, storedFile);
+  }
+
+  const extractedPath = `${storedFile.absolutePath}.journal-audio.mp3`;
+  await runFfmpeg(config.ffmpegBin, [
+    "-y",
+    "-i",
+    storedFile.absolutePath,
+    "-vn",
+    "-codec:a",
+    "libmp3lame",
+    "-b:a",
+    "128k",
+    extractedPath,
+  ]);
+  try {
+    return await transcribeFile(config, extractedPath);
+  } finally {
+    await rm(extractedPath, { force: true });
+  }
+}
+
+async function transcribeFile(config: AppConfig, transcriptionFilePath: string): Promise<string> {
+  if (!config.openaiApiKey) {
+    throw new Error("OPENAI_API_KEY is required to transcribe Telegram voice messages.");
+  }
+
   const audioBytes = await readFile(transcriptionFilePath);
   const form = new FormData();
   form.set("model", config.openaiTranscriptionModel);

@@ -164,9 +164,13 @@ The bot publishes its slash-command menu to Telegram on startup, so newly added 
 
 Images, documents, audio, video, and other Telegram files are saved into the bound repository's `.context/` directory using the original filename when Telegram provides one, then sent to Codex as local paths only once there is text to act on. Uploads with captions start a run immediately and use the caption as the instruction. Uploads without captions are staged for the next text message or captioned upload in that topic. A caption starting with `/ask` is also supported.
 
+A bound repository can opt into automatic media journaling with a validated `journal.config.json`. In that mode, configured voice, audio, video, video-note, and audio/video document messages are archived under `entries/YYYY/MM/DD/`, transcribed, indexed, committed once per Telegram media message, and pushed. Journal media is stored as data and never becomes a Codex prompt. Standalone text messages in the same topic continue through the normal agent flow. The journal currently uses regular Git, not Git LFS, and remains subject to the hosted Telegram Bot API's 20 MB download limit.
+
 When Codex creates or changes image files in the bound repository, or creates images through Codex's generated-image cache under `~/.codex/generated_images`, the bot sends those images back to the same Telegram topic after the run completes. JPEG, PNG, and WebP files are sent as photos when Telegram accepts them; other image formats such as GIF, SVG, TIFF, AVIF, HEIC, and oversized images are sent as documents.
 
 Voice messages are saved into `.context/`, converted with `ffmpeg` when Telegram sends an OpenAI-unsupported audio container, transcribed with the OpenAI API, saved as a `.transcript.txt` file, and then sent to Codex as the user's prompt. Set `OPENAI_API_KEY` before using voice transcription.
+
+The voice-as-prompt behavior above does not apply to repositories with automatic media journaling enabled. In those repositories, journal media is archived and transcribed without starting or steering an agent run.
 
 The bot pins the message that triggers each run and leaves the latest prompt pinned after completion so the task remains easy to find.
 

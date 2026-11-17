@@ -1,5 +1,12 @@
 # Linked Repos
 
+## LIFE Journal
+
+- Telegram chat: LIFE, `-1004361900873`
+- Topic: `Journal`, topic ID `5701`
+- Repository: `/home/gnu/life-manager/Journal`, private GitHub repository `guerrerocarlos/journal`
+- Contract: `journal.config.json` opts the binding into automatic media archival. Media is stored and transcribed without triggering Codex; standalone text retains the normal agent path.
+
 ## CODEX INGLESCONLIZA.COM Telegram Group
 
 Chat id: `-1003696100403`

@@ -65,3 +65,9 @@ Connector install/connect approval prompts may arrive as `mcpServer/elicitation/
 ## 2026-10-20: bounded unsupported-model recovery
 
 Use the existing effective configured model, rather than a hard-coded model list, for one automatic retry of the exact ChatGPT account/model rejection. Persist and audit that explicit selection so a resumed thread cannot silently retain the rejected model. Treat all work signals conservatively; never automatically replay after work or for generic failures. This improves recoverability without retrying customer side effects.
+
+## 2026-11-17: Repository-Owned Automatic Media Journaling
+
+Automatic journal ingestion is an explicit repository opt-in through a validated `journal.config.json`, not a hard-coded topic exception. Configured voice, audio, video, video-note, and audio/video document messages are data, never agent instructions. Standalone text in the same topic retains the normal Codex behavior.
+
+Each media message uses its Telegram timestamp in the repository timezone, stores the original raw file plus transcription and metadata, updates deterministic indexes, and creates one commit. File unique ID and SHA-256 checks provide idempotency. Regular Git is used for now, without Git LFS. The hosted Telegram Bot API's 20 MB download limit is the current size boundary.
