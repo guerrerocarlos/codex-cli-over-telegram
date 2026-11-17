@@ -22,6 +22,7 @@ export interface JournalConfig {
   indexDirectory: string;
   autoCommit: boolean;
   autoPush: boolean;
+  agentTrigger: "text-or-mention";
   mediaKinds: string[];
 }
 
@@ -99,6 +100,9 @@ export async function loadJournalConfig(repoPath: string): Promise<JournalConfig
   validateTimezone(timezone);
   const entriesDirectory = safeRelativeDirectory(input.entriesDirectory, "entriesDirectory");
   const indexDirectory = safeRelativeDirectory(input.indexDirectory, "indexDirectory");
+  if (input.agentTrigger !== "text-or-mention") {
+    throw new Error("journal.config.json agentTrigger must be text-or-mention.");
+  }
   const mediaKinds = Array.isArray(input.mediaKinds)
     ? input.mediaKinds.filter((item): item is string => typeof item === "string")
     : [];
@@ -114,6 +118,7 @@ export async function loadJournalConfig(repoPath: string): Promise<JournalConfig
     indexDirectory,
     autoCommit: input.autoCommit === true,
     autoPush: input.autoPush === true,
+    agentTrigger: "text-or-mention",
     mediaKinds,
   };
 }

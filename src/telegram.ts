@@ -1241,7 +1241,20 @@ async function handleFileMessage(
   }
   const journalFiles = journalConfig ? fileRefs.filter((fileRef) => isJournalMedia(fileRef, journalConfig)) : [];
   if (journalConfig && journalFiles.length > 0) {
+    const mentionPrompt = journalMediaMentionPrompt(ctx, bot);
     await handleJournalMediaMessage(ctx, config, storage, bot, binding, journalConfig, journalFiles);
+    if (mentionPrompt) {
+      storage.audit({
+        telegramUserId: ctx.from?.id ?? null,
+        chatId: binding.chatId,
+        messageThreadId: binding.messageThreadId,
+        eventType: "telegram_journal_media_mention_prompt",
+        details: {
+          telegramMessageId: ctx.message?.message_id ?? null,
+        },
+      });
+      await handlePrompt(ctx, config, storage, codex, bot, queue, mentionPrompt);
+    }
     return;
   }
 
@@ -3272,6 +3285,15 @@ function mentionGatedPromptText(
   }
 
   return stripBotMention(text, username).trim();
+}
+
+export function journalMediaMentionPrompt(ctx: Context, bot: Bot): string | null {
+  const message = ctx.message as TelegramMessageWithFiles | undefined;
+  const caption = message?.caption?.trim() ?? "";
+  if (!caption || !messageMentionsBot(caption, bot.botInfo.username)) {
+    return null;
+  }
+  return stripBotMention(caption, bot.botInfo.username).trim() || null;
 }
 
 function messageMentionsBot(text: string, username: string): boolean {

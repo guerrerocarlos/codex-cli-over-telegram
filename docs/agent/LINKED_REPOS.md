@@ -5,7 +5,7 @@
 - Telegram chat: LIFE, `-1004361900873`
 - Topic: `Journal`, topic ID `5701`
 - Repository: `/home/gnu/life-manager/Journal`, private GitHub repository `guerrerocarlos/journal`
-- Contract: `journal.config.json` opts the binding into automatic media archival. Media is stored and transcribed without triggering Codex; standalone text retains the normal agent path.
+- Contract: `journal.config.json` opts the binding into automatic media archival and requires `agentTrigger: "text-or-mention"`. Media is stored and transcribed mechanically, and never becomes agent context. Standalone text retains the normal agent path. A media caption starts an agent run only when it explicitly mentions the bot.
 
 ## CODEX INGLESCONLIZA.COM Telegram Group
 

@@ -42,6 +42,7 @@ const journalConfig = {
   indexDirectory: "indexes",
   autoCommit: true,
   autoPush: true,
+  agentTrigger: "text-or-mention",
   mediaKinds: ["voice", "audio", "video", "video_note", "audio-document", "video-document"],
 };
 

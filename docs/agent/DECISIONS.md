@@ -68,6 +68,6 @@ Use the existing effective configured model, rather than a hard-coded model list
 
 ## 2026-11-17: Repository-Owned Automatic Media Journaling
 
-Automatic journal ingestion is an explicit repository opt-in through a validated `journal.config.json`, not a hard-coded topic exception. Configured voice, audio, video, video-note, and audio/video document messages are data, never agent instructions. Standalone text in the same topic retains the normal Codex behavior.
+Automatic journal ingestion is an explicit repository opt-in through a validated `journal.config.json`, not a hard-coded topic exception. Configured voice, audio, video, video-note, and audio/video document messages are data, never agent instructions. The required `agentTrigger: "text-or-mention"` setting means standalone text retains the normal Codex behavior, while media is processed mechanically unless its caption explicitly mentions the bot. Media is never passed into the agent as task context.
 
 Each media message uses its Telegram timestamp in the repository timezone, stores the original raw file plus transcription and metadata, updates deterministic indexes, and creates one commit. File unique ID and SHA-256 checks provide idempotency. Regular Git is used for now, without Git LFS. The hosted Telegram Bot API's 20 MB download limit is the current size boundary.
