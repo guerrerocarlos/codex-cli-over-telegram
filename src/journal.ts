@@ -283,7 +283,7 @@ async function archiveJournalMediaUnlocked(
 
   const rawFilename = duplicate
     ? await existingRawFilename(entryAbsolutePath)
-    : `raw${safeExtension(input.storedFile.absolutePath)}`;
+    : journalRawFilename(input.fileRef, input.storedFile);
   const rawAbsolutePath = path.join(workingEntryPath, rawFilename);
   if (!duplicate) {
     await copyFile(input.storedFile.absolutePath, rawAbsolutePath);
@@ -679,15 +679,30 @@ function safeExtension(filename: string): string {
   return /^\.[a-z0-9]{1,12}$/.test(extension) ? extension : ".bin";
 }
 
+function journalRawFilename(ref: TelegramFileRef, storedFile: StoredContextFile): string {
+  const originalName = ref.originalName ?? storedFile.originalName;
+  const djiAudio = originalName?.match(/^DJI_07_(\d{8}_\d{6})(\.[A-Za-z0-9]{1,12})$/);
+  if (djiAudio && isAudioRef(ref)) {
+    return `${djiAudio[1]}${djiAudio[2]}`;
+  }
+  return `raw${safeExtension(storedFile.absolutePath)}`;
+}
+
 function isVideoRef(ref: TelegramFileRef): boolean {
   return ref.kind === "video" || ref.kind === "video_note" || ref.mimeType?.toLowerCase().startsWith("video/") === true;
 }
 
 function isTranscribableJournalMedia(ref: TelegramFileRef): boolean {
-  if (ref.kind === "voice" || ref.kind === "audio" || isVideoRef(ref)) {
+  if (isAudioRef(ref) || isVideoRef(ref)) {
     return true;
   }
-  return ref.mimeType?.toLowerCase().startsWith("audio/") === true;
+  return false;
+}
+
+function isAudioRef(ref: TelegramFileRef): boolean {
+  return ref.kind === "voice"
+    || ref.kind === "audio"
+    || ref.mimeType?.toLowerCase().startsWith("audio/") === true;
 }
 
 function safeRelativeDirectory(value: unknown, label: string): string {

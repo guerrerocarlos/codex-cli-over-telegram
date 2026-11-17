@@ -127,6 +127,8 @@ For a live check, send a voice message, video, Telegram photo, or image document
 
 Transcription failure still archives and commits the raw media with failure metadata. Re-sending the same Telegram media retries a failed entry. A push failure leaves the local commit intact, and startup recovery retries it once the repository is otherwise clean. Recovery only commits journal-generated paths and stops when unrelated changes exist.
 
+For DJI audio named `DJI_07_YYYYMMDD_HHMMSS.WAV`, confirm that the archived raw filename is `YYYYMMDD_HHMMSS.WAV`.
+
 ## Inspect Active Runs
 
 ```bash

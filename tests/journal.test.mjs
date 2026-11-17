@@ -137,6 +137,31 @@ test("journal archive stores raw media, transcript, indexes, and one pushed comm
   }
 });
 
+test("journal uses the embedded DJI audio timestamp as the archived filename", async () => {
+  const { temp, repo } = fixture();
+  try {
+    const source = path.join(temp, "DJI_07_20261117_192310.WAV");
+    writeFileSync(source, "raw DJI audio bytes");
+    const result = await archiveJournalMedia({
+      appConfig: { openaiTranscriptionModel: "test-transcribe" },
+      journalConfig,
+      repoPath: repo,
+      storedFile: { kind: "audio", absolutePath: source, relativePath: ".context/DJI_07_20261117_192310.WAV",
+        originalName: "DJI_07_20261117_192310.WAV", mimeType: "audio/wav", fileSize: 19 },
+      fileRef: { kind: "audio", fileId: "file-dji", fileUniqueId: "unique-dji", originalName: "DJI_07_20261117_192310.WAV",
+        mimeType: "audio/wav", fileSize: 19, durationSeconds: 4 },
+      telegramMessageId: 126,
+      capturedAt: new Date("2026-11-17T22:23:10Z"),
+      authorUsername: "@tester",
+    }, { transcribe: async () => "DJI transcript." });
+    assert.equal(readFileSync(path.join(repo, result.entryPath, "20261117_192310.WAV"), "utf8"), "raw DJI audio bytes");
+    const metadata = JSON.parse(readFileSync(path.join(repo, result.entryPath, "metadata.json"), "utf8"));
+    assert.equal(metadata.media.rawFile, "20261117_192310.WAV");
+  } finally {
+    rmSync(temp, { recursive: true, force: true });
+  }
+});
+
 test("journal archive commits raw media and retryable metadata when transcription fails", async () => {
   const { temp, repo } = fixture();
   try {

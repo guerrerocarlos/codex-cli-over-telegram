@@ -8,6 +8,8 @@
 
 - 2026-11-17: automatic media journaling is live on deployed commit `cc36e93bb440fc2f718e86dc2930276e56f70a0e`, deployed at `2026-11-17T14:28:23Z`. Health reported `ok: true` and `telegramBotStarted: true`; startup recovery confirmed the LIFE `Journal` repository was clean and pushed. The deployed source archives voice/audio/video messages with raw media, transcript, metadata, and indexes, then creates one regular Git commit per media message and pushes it. Journal media is mechanical and never becomes agent context. Standalone text starts Codex normally, while a media caption starts it only when it explicitly mentions the bot. Pushed source now adds Telegram photos and image documents, storing them with a `not_applicable` transcription status. Image activation awaits a safe bridge restart after the active Journal run completes. A fresh post-deployment image remains the manual end-to-end acceptance check.
 
+- 2026-11-17: pushed source also recognizes audio named `DJI_07_YYYYMMDD_HHMMSS.WAV` and archives it as `YYYYMMDD_HHMMSS.WAV`. This naming rule awaits the same guarded deployment as image ingestion.
+
 - Per-topic `/reasoning` overrides are stored in `topic_bindings.reasoning_effort` (NULL inherits Codex config), passed to exec and app-server, and included in fleet exports. Active turns are unchanged. Implementation verified on 2026-10-16; deployment requires an external shell because the running service has NoNewPrivileges enabled.
 
 - Service: `codex-cli-over-telegram`
