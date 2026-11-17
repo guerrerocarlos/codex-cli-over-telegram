@@ -1343,7 +1343,7 @@ async function handleJournalMediaMessage(
   journalConfig: JournalConfig,
   fileRefs: TelegramFileRef[],
 ): Promise<void> {
-  await reply(ctx, "Journal media received. Archiving and transcribing it now.", config);
+  await reply(ctx, "Journal media received. Archiving it now. Audio and video will also be transcribed.", config);
   const telegramMessageId = ctx.message?.message_id ?? null;
   if (telegramMessageId === null) {
     await reply(ctx, "Could not archive journal media because the Telegram message ID is missing.", config);
@@ -1394,7 +1394,11 @@ async function handleJournalMediaMessage(
             "Journal media archived.",
             "",
             `Entry: ${result.entryPath}`,
-            result.transcriptPath ? `Transcript: ${result.transcriptPath}` : "Transcript: unavailable",
+            result.transcriptPath
+              ? `Transcript: ${result.transcriptPath}`
+              : result.transcriptionStatus === "not_applicable"
+                ? "Transcript: not applicable for image media"
+                : "Transcript: unavailable",
             result.commitHash ? `Commit: ${result.commitHash}` : null,
             result.pushed ? "GitHub: pushed" : "GitHub: push pending",
           ].filter((line): line is string => line !== null);

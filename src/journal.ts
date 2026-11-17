@@ -23,6 +23,7 @@ export interface JournalConfig {
   autoCommit: boolean;
   autoPush: boolean;
   agentTrigger: "text-or-mention";
+  imageIngestion: boolean;
   mediaKinds: string[];
 }
 
@@ -34,8 +35,10 @@ interface JournalIndexEntry {
   telegramFileUniqueId: string;
   sha256: string;
   kind: string;
-  transcriptionStatus: "complete" | "failed";
+  transcriptionStatus: JournalTranscriptionStatus;
 }
+
+type JournalTranscriptionStatus = "complete" | "failed" | "not_applicable";
 
 interface JournalIndex {
   version: 1;
@@ -59,6 +62,7 @@ export interface JournalArchiveResult {
   commitHash: string | null;
   pushed: boolean;
   duplicate: boolean;
+  transcriptionStatus: JournalTranscriptionStatus;
   transcriptionError: string | null;
   pushError: string | null;
 }
@@ -103,6 +107,9 @@ export async function loadJournalConfig(repoPath: string): Promise<JournalConfig
   if (input.agentTrigger !== "text-or-mention") {
     throw new Error("journal.config.json agentTrigger must be text-or-mention.");
   }
+  if (typeof input.imageIngestion !== "boolean") {
+    throw new Error("journal.config.json imageIngestion must be a boolean.");
+  }
   const mediaKinds = Array.isArray(input.mediaKinds)
     ? input.mediaKinds.filter((item): item is string => typeof item === "string")
     : [];
@@ -119,6 +126,7 @@ export async function loadJournalConfig(repoPath: string): Promise<JournalConfig
     autoCommit: input.autoCommit === true,
     autoPush: input.autoPush === true,
     agentTrigger: "text-or-mention",
+    imageIngestion: input.imageIngestion,
     mediaKinds,
   };
 }
@@ -131,6 +139,9 @@ export function isJournalMedia(ref: TelegramFileRef, config: JournalConfig): boo
     return true;
   }
   const mime = ref.mimeType?.toLowerCase() ?? "";
+  if (config.imageIngestion && (ref.kind === "photo" || ref.kind === "document" && mime.startsWith("image/"))) {
+    return true;
+  }
   return config.mediaKinds.includes("audio-document") && ref.kind === "document" && mime.startsWith("audio/")
     || config.mediaKinds.includes("video-document") && ref.kind === "document" && mime.startsWith("video/");
 }
@@ -239,13 +250,14 @@ async function archiveJournalMediaUnlocked(
   const duplicate = index.entries.find((entry) =>
     entry.telegramFileUniqueId === input.fileRef.fileUniqueId || entry.sha256 === sha256,
   );
-  if (duplicate?.transcriptionStatus === "complete") {
+  if (duplicate && duplicate.transcriptionStatus !== "failed") {
     return {
       entryPath: duplicate.path,
-      transcriptPath: `${duplicate.path}/transcript.md`,
+      transcriptPath: duplicate.transcriptionStatus === "complete" ? `${duplicate.path}/transcript.md` : null,
       commitHash: null,
       pushed: true,
       duplicate: true,
+      transcriptionStatus: duplicate.transcriptionStatus,
       transcriptionError: null,
       pushError: null,
     };
@@ -285,21 +297,27 @@ async function archiveJournalMediaUnlocked(
   const transcribe = dependencies.transcribe ?? transcribeStoredJournalMedia;
   let transcript = "";
   let transcriptionError: string | null = null;
-  try {
-    transcript = (await transcribe(
-      input.appConfig,
-      rawStoredFile,
-      isVideoRef(input.fileRef),
-    )).trim();
-    if (!transcript) {
-      transcriptionError = "Transcription was empty.";
+  const transcriptionApplicable = isTranscribableJournalMedia(input.fileRef);
+  if (transcriptionApplicable) {
+    try {
+      transcript = (await transcribe(
+        input.appConfig,
+        rawStoredFile,
+        isVideoRef(input.fileRef),
+      )).trim();
+      if (!transcript) {
+        transcriptionError = "Transcription was empty.";
+      }
+    } catch (error) {
+      transcriptionError = errorMessage(error);
     }
-  } catch (error) {
-    transcriptionError = errorMessage(error);
   }
 
-  const transcriptRelativePath = transcriptionError ? null : `${entryRelativePath}/transcript.md`;
-  if (!transcriptionError) {
+  const transcriptionStatus: JournalTranscriptionStatus = transcriptionApplicable
+    ? transcriptionError ? "failed" : "complete"
+    : "not_applicable";
+  const transcriptRelativePath = transcriptionStatus === "complete" ? `${entryRelativePath}/transcript.md` : null;
+  if (transcriptRelativePath) {
     await atomicWrite(
       path.join(workingEntryPath, "transcript.md"),
       journalTranscriptMarkdown({
@@ -339,9 +357,9 @@ async function archiveJournalMediaUnlocked(
       sha256,
     },
     transcription: {
-      status: transcriptionError ? "failed" : "complete",
-      model: input.appConfig.openaiTranscriptionModel,
-      transcriptFile: transcriptionError ? null : "transcript.md",
+      status: transcriptionStatus,
+      model: transcriptionApplicable ? input.appConfig.openaiTranscriptionModel : null,
+      transcriptFile: transcriptRelativePath ? "transcript.md" : null,
       error: transcriptionError,
     },
   };
@@ -359,7 +377,7 @@ async function archiveJournalMediaUnlocked(
     telegramFileUniqueId: input.fileRef.fileUniqueId,
     sha256,
     kind: input.fileRef.kind,
-    transcriptionStatus: transcriptionError ? "failed" : "complete",
+    transcriptionStatus,
   };
   index.entries = index.entries.filter((entry) => entry.id !== entryId);
   index.entries.push(indexEntry);
@@ -398,6 +416,7 @@ async function archiveJournalMediaUnlocked(
     commitHash,
     pushed,
     duplicate: false,
+    transcriptionStatus,
     transcriptionError,
     pushError,
   };
@@ -428,9 +447,11 @@ async function writeMonthlyIndex(
     `# Journal entries for ${year}-${month}`,
     "",
     ...entries.map((entry) => {
-      const filename = entry.transcriptionStatus === "failed" ? "metadata.json" : "transcript.md";
+      const filename = entry.transcriptionStatus === "complete" ? "transcript.md" : "metadata.json";
       const target = path.posix.relative(sourceDirectory, `${entry.path}/${filename}`);
-      const suffix = entry.transcriptionStatus === "failed" ? " (transcription failed)" : "";
+      const suffix = entry.transcriptionStatus === "failed"
+        ? " (transcription failed)"
+        : entry.transcriptionStatus === "not_applicable" ? " (no transcription needed)" : "";
       return `- [${entry.capturedAt}](${target})${suffix}`;
     }),
     "",
@@ -494,7 +515,9 @@ async function rebuildJournalIndex(repoPath: string, config: JournalConfig): Pro
       || typeof metadata.source.fileUniqueId !== "string"
       || typeof metadata.source.kind !== "string"
       || typeof metadata.media?.sha256 !== "string"
-      || (metadata.transcription?.status !== "complete" && metadata.transcription?.status !== "failed")
+      || (metadata.transcription?.status !== "complete"
+        && metadata.transcription?.status !== "failed"
+        && metadata.transcription?.status !== "not_applicable")
     ) {
       continue;
     }
@@ -658,6 +681,13 @@ function safeExtension(filename: string): string {
 
 function isVideoRef(ref: TelegramFileRef): boolean {
   return ref.kind === "video" || ref.kind === "video_note" || ref.mimeType?.toLowerCase().startsWith("video/") === true;
+}
+
+function isTranscribableJournalMedia(ref: TelegramFileRef): boolean {
+  if (ref.kind === "voice" || ref.kind === "audio" || isVideoRef(ref)) {
+    return true;
+  }
+  return ref.mimeType?.toLowerCase().startsWith("audio/") === true;
 }
 
 function safeRelativeDirectory(value: unknown, label: string): string {

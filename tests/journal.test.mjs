@@ -43,10 +43,11 @@ const journalConfig = {
   autoCommit: true,
   autoPush: true,
   agentTrigger: "text-or-mention",
+  imageIngestion: true,
   mediaKinds: ["voice", "audio", "video", "video_note", "audio-document", "video-document"],
 };
 
-test("journal config identifies voice, video, and media documents", async () => {
+test("journal config identifies voice, video, image, and media documents", async () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "journal-config-"));
   try {
     writeFileSync(path.join(dir, "journal.config.json"), `${JSON.stringify(journalConfig)}\n`);
@@ -57,11 +58,42 @@ test("journal config identifies voice, video, and media documents", async () => 
     assert.equal(isJournalMedia({ kind: "document", fileId: "2", fileUniqueId: "u2", originalName: "clip.mp4",
       mimeType: "video/mp4", fileSize: 1, durationSeconds: null }, config), true);
     assert.equal(isJournalMedia({ kind: "photo", fileId: "3", fileUniqueId: "u3", originalName: null,
-      mimeType: "image/jpeg", fileSize: 1, durationSeconds: null }, config), false);
+      mimeType: "image/jpeg", fileSize: 1, durationSeconds: null }, config), true);
+    assert.equal(isJournalMedia({ kind: "document", fileId: "4", fileUniqueId: "u4", originalName: "image.png",
+      mimeType: "image/png", fileSize: 1, durationSeconds: null }, config), true);
     assert.equal(zonedDateParts(new Date("2026-11-17T12:34:56Z"), "America/Asuncion").isoWithOffset,
       "2026-11-17T09:34:56-03:00");
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("journal archive stores images without attempting speech transcription", async () => {
+  const { temp, repo } = fixture();
+  try {
+    const source = path.join(temp, "photo.jpg");
+    writeFileSync(source, "raw image bytes");
+    const result = await archiveJournalMedia({
+      appConfig: { openaiTranscriptionModel: "test-transcribe" },
+      journalConfig,
+      repoPath: repo,
+      storedFile: { kind: "photo", absolutePath: source, relativePath: ".context/photo.jpg",
+        originalName: "photo.jpg", mimeType: "image/jpeg", fileSize: 15 },
+      fileRef: { kind: "photo", fileId: "file-image", fileUniqueId: "unique-image", originalName: "photo.jpg",
+        mimeType: "image/jpeg", fileSize: 15, durationSeconds: null },
+      telegramMessageId: 125,
+      capturedAt: new Date("2026-11-17T14:00:00Z"),
+      authorUsername: "@tester",
+    }, { transcribe: async () => { throw new Error("image must not transcribe"); } });
+    assert.equal(result.transcriptionStatus, "not_applicable");
+    assert.equal(result.transcriptPath, null);
+    assert.equal(readFileSync(path.join(repo, result.entryPath, "raw.jpg"), "utf8"), "raw image bytes");
+    const metadata = JSON.parse(readFileSync(path.join(repo, result.entryPath, "metadata.json"), "utf8"));
+    assert.equal(metadata.transcription.status, "not_applicable");
+    assert.equal(metadata.transcription.model, null);
+    assert.equal(git(repo, "status", "--short"), "");
+  } finally {
+    rmSync(temp, { recursive: true, force: true });
   }
 });
 
