@@ -10,6 +10,8 @@
 
 - 2026-11-17: pushed source also recognizes audio named `DJI_07_YYYYMMDD_HHMMSS.WAV` and archives it as `YYYYMMDD_HHMMSS.WAV`. This naming rule awaits the same guarded deployment as image ingestion.
 
+- 2026-11-18: source adds a bearer-authenticated Journal Daemon multipart endpoint at `/journal-daemon/v1/imports`. It validates the configured bound Telegram group/topic, posts audio there, and archives it through the Journal pipeline. It must be exposed only with Tailscale HTTPS after `JOURNAL_INGEST_TOKEN` is set.
+
 - Per-topic `/reasoning` overrides are stored in `topic_bindings.reasoning_effort` (NULL inherits Codex config), passed to exec and app-server, and included in fleet exports. Active turns are unchanged. Implementation verified on 2026-10-16; deployment requires an external shell because the running service has NoNewPrivileges enabled.
 
 - Service: `codex-cli-over-telegram`

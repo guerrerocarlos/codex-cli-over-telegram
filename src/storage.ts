@@ -121,6 +121,18 @@ interface WorkItemRow {
   completed_at: string | null;
 }
 
+interface JournalIngestImportRow {
+  sha256: string;
+  chat_id: number;
+  message_thread_id: number;
+  status: "processing" | "sent" | "completed";
+  telegram_message_id: number | null;
+  telegram_file_id: string | null;
+  telegram_file_unique_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface PendingContextFileRecord {
   id: number;
   bindingId: number;
@@ -173,6 +185,18 @@ export interface TopicMessageInput {
   authorId: number | null;
   authorName: string | null;
   text: string;
+}
+
+export interface JournalIngestImportRecord {
+  sha256: string;
+  chatId: number;
+  messageThreadId: number;
+  status: "processing" | "sent" | "completed";
+  telegramMessageId: number | null;
+  telegramFileId: string | null;
+  telegramFileUniqueId: string | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface ManagerEventInput {
@@ -275,6 +299,20 @@ function mapTopicMessage(row: TopicMessageRow): TopicMessageRecord {
     authorName: row.author_name,
     text: row.text,
     createdAt: row.created_at,
+  };
+}
+
+function mapJournalIngestImport(row: JournalIngestImportRow): JournalIngestImportRecord {
+  return {
+    sha256: row.sha256,
+    chatId: row.chat_id,
+    messageThreadId: row.message_thread_id,
+    status: row.status,
+    telegramMessageId: row.telegram_message_id,
+    telegramFileId: row.telegram_file_id,
+    telegramFileUniqueId: row.telegram_file_unique_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
   };
 }
 
@@ -492,6 +530,18 @@ export class Storage {
         ON work_items (chat_id, status, updated_at);
       CREATE INDEX IF NOT EXISTS work_items_binding_idx
         ON work_items (binding_id, status);
+
+      CREATE TABLE IF NOT EXISTS journal_ingest_imports (
+        sha256 TEXT PRIMARY KEY,
+        chat_id INTEGER NOT NULL,
+        message_thread_id INTEGER NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('processing', 'sent', 'completed')),
+        telegram_message_id INTEGER,
+        telegram_file_id TEXT,
+        telegram_file_unique_id TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
     `);
 
     this.addColumnIfMissing("topic_bindings", "model", "TEXT");
@@ -831,6 +881,43 @@ export class Storage {
       .prepare("SELECT * FROM topic_bindings WHERE chat_id = ? AND message_thread_id = ?")
       .get(chatId, messageThreadId) as BindingRow | undefined;
     return row ? mapBinding(row) : null;
+  }
+
+  getJournalIngestImport(sha256: string): JournalIngestImportRecord | null {
+    const row = this.db
+      .prepare("SELECT * FROM journal_ingest_imports WHERE sha256 = ?")
+      .get(sha256) as JournalIngestImportRow | undefined;
+    return row ? mapJournalIngestImport(row) : null;
+  }
+
+  createJournalIngestImport(sha256: string, chatId: number, messageThreadId: number): JournalIngestImportRecord {
+    const timestamp = now();
+    this.db
+      .prepare(
+        `INSERT OR IGNORE INTO journal_ingest_imports
+         (sha256, chat_id, message_thread_id, status, created_at, updated_at)
+         VALUES (?, ?, ?, 'processing', ?, ?)`,
+      )
+      .run(sha256, chatId, messageThreadId, timestamp, timestamp);
+    const record = this.getJournalIngestImport(sha256);
+    if (!record) throw new Error("Failed to load journal ingest import.");
+    return record;
+  }
+
+  markJournalIngestSent(sha256: string, telegramMessageId: number, telegramFileId: string, telegramFileUniqueId: string): void {
+    this.db
+      .prepare(
+        `UPDATE journal_ingest_imports
+         SET status = 'sent', telegram_message_id = ?, telegram_file_id = ?, telegram_file_unique_id = ?, updated_at = ?
+         WHERE sha256 = ?`,
+      )
+      .run(telegramMessageId, telegramFileId, telegramFileUniqueId, now(), sha256);
+  }
+
+  completeJournalIngestImport(sha256: string): void {
+    this.db
+      .prepare("UPDATE journal_ingest_imports SET status = 'completed', updated_at = ? WHERE sha256 = ?")
+      .run(now(), sha256);
   }
 
   getBindingById(bindingId: number): TopicBinding | null {

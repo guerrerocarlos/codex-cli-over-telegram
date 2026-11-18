@@ -6,6 +6,7 @@
 - Topic: `Journal`, topic ID `5701`
 - Repository: `/home/gnu/life-manager/Journal`, private GitHub repository `guerrerocarlos/journal`
 - Contract: `journal.config.json` opts the binding into automatic media archival and requires `agentTrigger: "text-or-mention"`. Voice, audio, video, Telegram photos, and image documents are stored mechanically and never become agent context. Audio and video are transcribed, while images use `not_applicable` transcription status. Standalone text retains the normal agent path. A media caption starts an agent run only when it explicitly mentions the bot.
+- `/home/gnu/journal-daemon` submits macOS-spooled audio to `POST /journal-daemon/v1/imports` through Tailscale HTTPS. Its explicit `chatId` and `messageThreadId` must match this binding. The bearer token is held in the daemon Keychain and bridge service environment, never in repository configuration.
 
 ## CODEX INGLESCONLIZA.COM Telegram Group
 

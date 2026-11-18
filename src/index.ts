@@ -11,6 +11,7 @@ import { startHealthServer } from "./health.js";
 import { logger } from "./logger.js";
 import { CronScheduler } from "./cronScheduler.js";
 import { recoverJournalRepositories } from "./journal.js";
+import { createJournalIngestHandler } from "./journalIngest.js";
 
 async function main(): Promise<void> {
   const config = loadConfig();
@@ -23,6 +24,7 @@ async function main(): Promise<void> {
       : new CodexExecBackend(config);
   const codex = new ProviderRouterBackend(openaiBackend, new GrokAcpBackend(config), new ClaudeAcpBackend(config));
   const runtimeStatus = { telegramBotStarted: false };
+  const bot = createTelegramBot(config, storage, codex, { queue });
   const healthServer = startHealthServer(config, async (request) =>
     handleTelegramBridgeRequest({
       storage,
@@ -33,8 +35,8 @@ async function main(): Promise<void> {
       request,
     }),
     () => runtimeStatus,
+    createJournalIngestHandler({ config, storage, bot }),
   );
-  const bot = createTelegramBot(config, storage, codex, { queue });
   const cronScheduler = new CronScheduler({ storage, bot, config, codex, queue });
 
   const shutdown = async (signal: string) => {

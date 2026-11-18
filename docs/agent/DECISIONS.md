@@ -73,3 +73,7 @@ Automatic journal ingestion is an explicit repository opt-in through a validated
 Each media message uses its Telegram timestamp in the repository timezone, stores the original raw file plus metadata, updates deterministic indexes, and creates one commit. Audio and video also receive a transcription. Images are stored without speech transcription and have `not_applicable` status. File unique ID and SHA-256 checks provide idempotency. Regular Git is used for now, without Git LFS. The hosted Telegram Bot API's 20 MB download limit is the current size boundary.
 
 For audio named `DJI_07_YYYYMMDD_HHMMSS.WAV`, archive the raw file as `YYYYMMDD_HHMMSS.WAV`, preserving the timestamp and extension from the original name.
+
+## 2026-11-18: Journal Daemon ingress
+
+Journal Daemon audio reaches the bridge through a bearer-authenticated multipart endpoint published with Tailscale Serve. The request must name an existing bound Telegram group/topic, and the destination must opt into Journal media. The bridge sends to that topic and archives the same bytes through the existing Journal pipeline. It persists digest delivery state so completed retries are idempotent; the unavoidable network failure during Telegram's non-idempotent send call remains at-least-once and is recorded before archive completion.

@@ -1,5 +1,6 @@
 import http from "node:http";
 import type { AppConfig } from "./config.js";
+import type { JournalIngestHandler } from "./journalIngest.js";
 import { logger } from "./logger.js";
 
 export type BridgeAction =
@@ -69,6 +70,7 @@ export function startHealthServer(
   config: AppConfig,
   bridgeHandler?: BridgeHandler,
   runtimeStatus: RuntimeStatusProvider = () => ({ telegramBotStarted: false }),
+  journalIngestHandler?: JournalIngestHandler,
 ): http.Server {
   const server = http.createServer((request, response) => {
     if (request.method === "GET" && request.url === "/health") {
@@ -93,6 +95,11 @@ export function startHealthServer(
       bridgeHandler
     ) {
       void handleBridgeRequest(config, bridgeHandler, request, response);
+      return;
+    }
+
+    if (request.method === "POST" && request.url === "/journal-daemon/v1/imports" && journalIngestHandler) {
+      void journalIngestHandler(request, response);
       return;
     }
 

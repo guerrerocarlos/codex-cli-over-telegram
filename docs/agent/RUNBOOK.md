@@ -2,6 +2,17 @@
 
 ## Health Check
 
+## Journal Daemon ingestion
+
+Set `JOURNAL_INGEST_TOKEN` in `/etc/codex-cli-over-telegram/env` with root ownership and mode `0640`, deploy through `scripts/codex-service.sh update`, then publish the localhost listener only to the tailnet:
+
+```bash
+sudo tailscale serve --https=443 http://127.0.0.1:8787
+tailscale serve status
+```
+
+The endpoint is `https://<node>.ts.net/journal-daemon/v1/imports`. Do not configure a public proxy. The daemon provides multipart audio, explicit `chatId` and `messageThreadId`, bearer authentication, and `Idempotency-Key: sha256:<digest>`. Confirm that route is a bound Journal topic before enabling a client.
+
 Reasoning controls in an OpenAI-bound topic: `/reasoning` shows the selection,
 `/reasoning high` sets it, and `/reasoning default` clears it. Applies next run.
 Verify with `npm run build` and `node --test tests/reasoning.test.mjs`.
