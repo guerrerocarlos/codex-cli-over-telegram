@@ -1,5 +1,13 @@
 # Agent Decisions
 
+## Explicit File Delivery
+
+Deliver arbitrary requested documents through an explicit manager MCP `send_file`
+action, not automatic scanning of changed files. Scope reads to the destination
+binding's real repo path and snapshot at most 20 MiB before queuing. Reuse the
+existing sendDocument queue and return failure when retries do not deliver a
+message. Keep Telegram group/topic destination explicit within the current chat.
+
 ## Per-Topic Reasoning
 
 Store a nullable effort override on the binding rather than changing global Codex config.

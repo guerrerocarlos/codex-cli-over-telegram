@@ -4,6 +4,20 @@ Run Codex from Telegram.
 
 Each Telegram topic can be bound to a different folder, so one Telegram group can control many repos or worktrees at the same time.
 
+## Agent File Delivery
+
+Ask the agent to send a file, for example "Send me the report as a PDF". Codex runs
+with the Telegram manager MCP bridge can call `telegram_manager.send_file` with
+`topic`, `filePath`, and an optional plain-text `caption`. The file is uploaded as
+a Telegram document, preserving its filename, to that bound topic in the current chat.
+
+Files must be non-empty regular files inside the destination topic's repo folder
+(relative or absolute paths accepted), at most 20 MiB. Symlinks outside that folder
+are rejected. Captions can contain up to 1024 characters. The tool returns the
+Telegram message ID only after upload succeeds. Failed sends return an error.
+Files outside the repo must first be copied into it. Restricted topics that disable
+the manager MCP bridge do not expose this tool. Automatic image delivery remains available.
+
 ## Quick Start With npx
 
 Requirements:

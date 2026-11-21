@@ -19,6 +19,7 @@ import type {
   WorkItemStatus,
 } from "./types.js";
 import { Storage } from "./storage.js";
+import { readTelegramAttachment } from "./telegramFile.js";
 import { RunQueue } from "./runQueue.js";
 import { runWithModelFallback } from "./modelFallback.js";
 import { resolveAllowedRepoPath } from "./pathPolicy.js";
@@ -2011,6 +2012,29 @@ export async function handleTelegramBridgeRequest(input: {
   request: BridgeRequest;
 }): Promise<BridgeResult> {
   const { storage, bot, config, codex, queue, request } = input;
+
+  if (request.action === "send_file") {
+    if (!config.allowedTelegramChatIds.has(request.chatId)) return { ok: false, message: "Chat is not authorized." };
+    const binding = findManagerTargetBinding(storage, request.chatId, request.selector?.trim() ?? "");
+    if (!binding) return { ok: false, message: "Destination topic is not bound." };
+    if (!request.filePath?.trim()) return { ok: false, message: "send_file requires filePath." };
+    if ((request.caption?.length ?? 0) > 1024) return { ok: false, message: "Caption must be at most 1024 characters." };
+    try {
+      const file = await readTelegramAttachment(binding.repoPath, request.filePath);
+      const sent = await sendQueueFor(config).sendDocument(bot.api, binding.chatId,
+        new InputFile(file.data, file.name), {
+          ...(binding.messageThreadId > 0 ? { message_thread_id: binding.messageThreadId } : {}),
+          ...(request.caption ? { caption: request.caption } : {}),
+        }, file.name);
+      if (!sent) return { ok: false, message: "Telegram did not accept the file. Delivery failed." };
+      storage.audit({ telegramUserId: null, chatId: binding.chatId,
+        messageThreadId: binding.messageThreadId, eventType: "agent_file_sent",
+        details: { fileName: file.name, size: file.data.length, messageId: sent.message_id } });
+      return { ok: true, message: `Sent ${file.name} to Telegram.`, messageId: sent.message_id, topicId: binding.messageThreadId };
+    } catch (error) {
+      return { ok: false, message: `Could not send file: ${errorMessage(error)}` };
+    }
+  }
 
   if (request.action === "list_topics") {
     const topics = storage.listBindingsForChat(request.chatId).map((binding) => {

@@ -14,6 +14,8 @@ interface JsonRpcRequest {
 }
 
 interface ToolCallArguments {
+  filePath?: unknown;
+  caption?: unknown;
   topic?: unknown;
   prompt?: unknown;
   cron?: unknown;
@@ -83,6 +85,20 @@ async function handleLine(line: string): Promise<void> {
       case "tools/list":
         respond(request.id, {
           tools: [
+            {
+              name: "send_file",
+              description: "Send a local file as a Telegram attachment to a bound topic in this chat. Use this to deliver requested PDFs, spreadsheets, archives, or other files, rather than only showing a local path. Files must be inside the target topic's repo folder, at most 20 MiB. Use list_topics to find the exact topic id (including 0).",
+              inputSchema: {
+                type: "object",
+                properties: {
+                  topic: { type: "string", description: "Exact destination topic id, name, or repo folder." },
+                  filePath: { type: "string", description: "Path relative to the bound repo, or absolute path inside it." },
+                  caption: { type: "string", description: "Optional plain-text caption, at most 1024 characters." },
+                },
+                required: ["topic", "filePath"],
+                additionalProperties: false,
+              },
+            },
             {
               name: "queue_topic",
               description:
@@ -348,6 +364,7 @@ async function handleLine(line: string): Promise<void> {
 async function callTool(params: any): Promise<unknown> {
   const toolName = params?.name;
   if (
+    toolName !== "send_file" &&
     toolName !== "queue_topic" &&
     toolName !== "list_topics" &&
     toolName !== "read_topic_messages" &&
@@ -375,6 +392,15 @@ async function callTool(params: any): Promise<unknown> {
     chatId: bridgeConfig.chatId,
     action: toolName,
   };
+
+  if (toolName === "send_file") {
+    const topic = typeof args.topic === "string" ? args.topic.trim() : "";
+    const filePath = typeof args.filePath === "string" ? args.filePath.trim() : "";
+    if (!topic || !filePath) throw new Error("send_file requires topic and filePath.");
+    body.selector = topic;
+    body.filePath = filePath;
+    if (typeof args.caption === "string") body.caption = args.caption;
+  }
 
   if (toolName === "queue_topic") {
     const topic = typeof args.topic === "string" ? args.topic.trim() : "";

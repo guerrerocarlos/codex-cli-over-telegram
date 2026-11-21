@@ -4,6 +4,7 @@ import type { JournalIngestHandler } from "./journalIngest.js";
 import { logger } from "./logger.js";
 
 export type BridgeAction =
+  | "send_file"
   | "queue_topic"
   | "list_topics"
   | "read_topic_messages"
@@ -20,6 +21,8 @@ export type BridgeAction =
 
 export interface BridgeRequest {
   action: BridgeAction;
+  filePath?: string;
+  caption?: string;
   chatId: number;
   selector?: string;
   prompt?: string;
@@ -41,6 +44,7 @@ export interface BridgeRequest {
 }
 
 export interface BridgeResult {
+  messageId?: number;
   ok: boolean;
   message: string;
   runId?: number;
@@ -190,6 +194,7 @@ function normalizeBridgeRequest(url: string, value: unknown): BridgeRequest | nu
 
   const action = record.action;
   if (
+    action !== "send_file" &&
     action !== "queue_topic" &&
     action !== "list_topics" &&
     action !== "read_topic_messages" &&
@@ -211,6 +216,8 @@ function normalizeBridgeRequest(url: string, value: unknown): BridgeRequest | nu
     action,
     chatId,
   };
+  if (typeof record.filePath === "string") bridgeRequest.filePath = record.filePath;
+  if (typeof record.caption === "string") bridgeRequest.caption = record.caption;
   if (typeof record.selector === "string") {
     bridgeRequest.selector = record.selector;
   }

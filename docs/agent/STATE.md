@@ -1,5 +1,10 @@
 # Agent State
 
+- 2026-11-21: implemented explicit `telegram_manager.send_file` delivery for regular
+  repo files up to 20 MiB, with captions, destination binding validation, queued
+  sends, and Telegram message ID confirmation. Deployment pending external-shell
+  update because the running system service has NoNewPrivileges enabled.
+
 ## Current Runtime
 
 - 2026-10-21: the manager MCP app-server arguments require one `-c` flag for every override. Two missing flags made manager-topic runs exit immediately with code 2 after the 0.163.0 Codex CLI upgrade. Regression coverage now verifies the complete argument sequence.

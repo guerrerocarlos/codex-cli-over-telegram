@@ -1,5 +1,16 @@
 # Agent Runbook
 
+## Agent File Delivery
+
+Use `telegram_manager.send_file` with `topic` (exact topic ID as a string, including
+`"0"`), `filePath` (inside that topic's repo), and optional `caption`. Read `ok` and
+`messageId` before reporting delivery. Success audit events use `agent_file_sent`.
+The tool uses the existing authenticated `/bridge` endpoint and manager chat scope.
+Validate with `npm run build` and `node --test tests/sendFile.test.mjs`.
+After committing/pushing, run `./scripts/codex-service.sh update` from the normal
+WSL shell when no tasks are running. Verify `/health` reports the deployed commit.
+New Codex runs discover the tool through the manager MCP tool list.
+
 ## Health Check
 
 ## Journal Daemon ingestion
