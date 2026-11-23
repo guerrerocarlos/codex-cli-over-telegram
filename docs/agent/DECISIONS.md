@@ -85,3 +85,5 @@ For audio named `DJI_07_YYYYMMDD_HHMMSS.WAV`, archive the raw file as `YYYYMMDD_
 ## 2026-11-18: Journal Daemon ingress
 
 Journal Daemon audio reaches the bridge through a multipart endpoint published only with Tailscale Serve. The tailnet access policy is the authorization boundary, so the endpoint must remain localhost-bound behind Serve and must never be exposed using Funnel or a public proxy. The request must name an existing bound Telegram group/topic, and the destination must opt into Journal media. The bridge sends to that topic and archives the same bytes through the existing Journal pipeline. It persists digest delivery state so completed retries are idempotent; the unavoidable network failure during Telegram's non-idempotent send call remains at-least-once and is recorded before archive completion.
+
+The multipart parser must accept the daemon wire format as an explicit contract, including CRLF delimiters and standard quoted content-disposition fields. Keep a narrow automated parser test for that contract.

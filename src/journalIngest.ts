@@ -151,24 +151,36 @@ async function readImport(request: http.IncomingMessage, maximumBytes: number): 
   };
 }
 
-function parseMultipart(body: Buffer, boundary: string): MultipartPart[] {
+export function parseMultipart(body: Buffer, boundary: string): MultipartPart[] {
   const marker = Buffer.from(`--${boundary}`);
+  const crlfMarker = Buffer.from(`\r\n--${boundary}`);
+  const lfMarker = Buffer.from(`\n--${boundary}`);
   const parts: MultipartPart[] = [];
-  let offset = marker.length + 2;
-  while (offset < body.length) {
-    const next = body.indexOf(marker, offset);
+  let markerOffset = body.indexOf(marker);
+  while (markerOffset >= 0) {
+    let offset = markerOffset + marker.length;
+    if (body.subarray(offset, offset + 2).equals(Buffer.from("--"))) break;
+    if (body.subarray(offset, offset + 2).equals(Buffer.from("\r\n"))) offset += 2;
+    else if (body[offset] === 0x0a) offset += 1;
+    else break;
+    const nextCRLF = body.indexOf(crlfMarker, offset);
+    const nextLF = body.indexOf(lfMarker, offset);
+    const next = nextCRLF < 0 ? nextLF : nextLF < 0 ? nextCRLF : Math.min(nextCRLF, nextLF);
     if (next < 0) break;
-    const segment = body.subarray(offset, next - 2);
-    const separator = segment.indexOf("\r\n\r\n");
+    const segment = body.subarray(offset, next);
+    const crlfSeparator = segment.indexOf("\r\n\r\n");
+    const lfSeparator = segment.indexOf("\n\n");
+    const separator = crlfSeparator < 0 ? lfSeparator : lfSeparator < 0 ? crlfSeparator : Math.min(crlfSeparator, lfSeparator);
     if (separator >= 0) {
+      const separatorLength = crlfSeparator === separator ? 4 : 2;
       const headers: Record<string, string> = {};
-      for (const line of segment.subarray(0, separator).toString("utf8").split("\r\n")) {
+      for (const line of segment.subarray(0, separator).toString("utf8").split(/\r?\n/)) {
         const colon = line.indexOf(":");
         if (colon > 0) headers[line.slice(0, colon).toLowerCase()] = line.slice(colon + 1).trim();
       }
-      parts.push({ headers, body: segment.subarray(separator + 4) });
+      parts.push({ headers, body: segment.subarray(separator + separatorLength) });
     }
-    offset = next + marker.length + 2;
+    markerOffset = next + (next === nextCRLF ? 2 : 1);
   }
   return parts;
 }
