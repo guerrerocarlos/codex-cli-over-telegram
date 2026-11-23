@@ -32,14 +32,6 @@ export function createJournalIngestHandler(input: {
 }): JournalIngestHandler {
   return async (request, response) => {
     try {
-      if (!input.config.journalIngestToken) {
-        respond(response, 404, { ok: false, error: "not found" });
-        return;
-      }
-      if (request.headers.authorization !== `Bearer ${input.config.journalIngestToken}`) {
-        respond(response, 401, { ok: false, error: "unauthorized" });
-        return;
-      }
       const parsed = await readImport(request, input.config.journalIngestMaxBytes);
       const { metadata, bytes, filename, mimeType } = parsed;
       const binding = input.storage.getBinding(metadata.destination.chatId, metadata.destination.messageThreadId);
