@@ -49,7 +49,6 @@ export interface AppConfig {
   allowUnthreadedChats: boolean;
   managerRepoPath: string;
   managerBridgeToken: string;
-  journalIngestMaxBytes: number;
   deployBranch: string;
   deployCommitHash: string;
   deployedAt: string;
@@ -266,7 +265,6 @@ export function loadConfig(): AppConfig {
     allowUnthreadedChats: parseBoolean("ALLOW_UNTHREADED_CHATS", false),
     managerRepoPath,
     managerBridgeToken,
-    journalIngestMaxBytes: parseInteger("JOURNAL_INGEST_MAX_BYTES", 20 * 1024 * 1024),
     deployBranch: optional("DEPLOY_BRANCH", "unknown"),
     deployCommitHash: optional("DEPLOY_COMMIT_HASH", "unknown"),
     deployedAt: optional("DEPLOYED_AT", "unknown"),

@@ -1,6 +1,11 @@
 import { createHash } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
+import { spawn } from "node:child_process";
+import { createWriteStream } from "node:fs";
+import { copyFile, mkdir, mkdtemp, rm, stat } from "node:fs/promises";
+import { finished } from "node:stream/promises";
+import os from "node:os";
 import path from "node:path";
+import Busboy from "busboy";
 import type http from "node:http";
 import { Bot, InputFile } from "grammy";
 import type { AppConfig } from "./config.js";
@@ -20,11 +25,6 @@ interface ImportMetadata {
   destination: { chatId: number; messageThreadId: number };
 }
 
-interface MultipartPart {
-  headers: Record<string, string>;
-  body: Buffer;
-}
-
 export function createJournalIngestHandler(input: {
   config: AppConfig;
   storage: Storage;
@@ -32,8 +32,8 @@ export function createJournalIngestHandler(input: {
 }): JournalIngestHandler {
   return async (request, response) => {
     try {
-      const parsed = await readImport(request, input.config.journalIngestMaxBytes);
-      const { metadata, bytes, filename, mimeType } = parsed;
+      const parsed = await readImport(request);
+      const { metadata } = parsed;
       const binding = input.storage.getBinding(metadata.destination.chatId, metadata.destination.messageThreadId);
       if (!binding) {
         respond(response, 422, { ok: false, error: "destination is not a bound Telegram topic" });
@@ -41,13 +41,14 @@ export function createJournalIngestHandler(input: {
       }
       const journalConfig = await loadJournalConfig(binding.repoPath);
       const fileRefKind = "audio";
+      const converted = await convertToMp3(input.config, parsed);
       const candidate: TelegramFileRef = {
         kind: fileRefKind,
         fileId: "pending",
         fileUniqueId: metadata.sha256,
-        originalName: filename,
-        mimeType,
-        fileSize: bytes.byteLength,
+        originalName: converted.filename,
+        mimeType: "audio/mpeg",
+        fileSize: converted.bytes,
         durationSeconds: null,
       };
       if (!journalConfig?.enabled || !isJournalMedia(candidate, journalConfig)) {
@@ -69,7 +70,7 @@ export function createJournalIngestHandler(input: {
       if (imported.status === "processing") {
         const sent = await input.bot.api.sendAudio(
           binding.chatId,
-          new InputFile(bytes, filename),
+          new InputFile(converted.path, converted.filename),
           { message_thread_id: binding.messageThreadId, disable_notification: true },
         );
         const audio = sent.audio;
@@ -81,7 +82,7 @@ export function createJournalIngestHandler(input: {
       if (!imported?.telegramMessageId || !imported.telegramFileId || !imported.telegramFileUniqueId) {
         throw new Error("Journal import does not have persisted Telegram delivery metadata.");
       }
-      const storedFile = await stageImport(binding.repoPath, metadata.sha256, filename, mimeType, bytes);
+      const storedFile = await stageImport(binding.repoPath, metadata.sha256, converted.path, converted.filename, "audio/mpeg");
       const archiveRef: TelegramFileRef = {
         ...candidate,
         fileId: imported.telegramFileId,
@@ -109,80 +110,110 @@ export function createJournalIngestHandler(input: {
     } catch (error) {
       logger.warn("journal daemon import failed", { error: error instanceof Error ? error.message : String(error) });
       respond(response, 500, { ok: false, error: "journal import failed" });
+    } finally {
+      if ("journalDaemonTemporaryDirectory" in request) {
+        await rm(request.journalDaemonTemporaryDirectory, { recursive: true, force: true });
+      }
     }
   };
 }
 
-async function readImport(request: http.IncomingMessage, maximumBytes: number): Promise<{
+declare module "node:http" {
+  interface IncomingMessage {
+    journalDaemonTemporaryDirectory?: string;
+  }
+}
+
+interface ParsedImport {
   metadata: ImportMetadata;
-  bytes: Buffer;
+  rawPath: string;
+  directory: string;
   filename: string;
   mimeType: string;
-}> {
-  const boundary = request.headers["content-type"]?.match(/multipart\/form-data;\s*boundary=(?:"([^"]+)"|([^;\s]+))/i)?.slice(1).find(Boolean);
-  if (!boundary) throw new Error("Expected multipart/form-data.");
-  const chunks: Buffer[] = [];
-  let size = 0;
-  for await (const chunk of request) {
-    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-    size += buffer.byteLength;
-    if (size > maximumBytes + 128 * 1024) throw new Error("Journal import exceeds the configured size limit.");
-    chunks.push(buffer);
-  }
-  const parts = parseMultipart(Buffer.concat(chunks), boundary);
-  const metadataPart = parts.find((part) => part.headers["content-disposition"]?.includes('name="metadata"'));
-  const filePart = parts.find((part) => part.headers["content-disposition"]?.includes('name="file"'));
-  if (!metadataPart || !filePart) throw new Error("Journal import requires metadata and file parts.");
-  const metadata = normalizeMetadata(JSON.parse(metadataPart.body.toString("utf8")));
-  if (filePart.body.byteLength !== metadata.byteCount || filePart.body.byteLength > maximumBytes) {
-    throw new Error("Journal import byte count is invalid.");
-  }
-  const digest = createHash("sha256").update(filePart.body).digest("hex");
-  if (digest !== metadata.sha256 || request.headers["idempotency-key"] !== `sha256:${digest}`) {
-    throw new Error("Journal import digest is invalid.");
-  }
-  const disposition = filePart.headers["content-disposition"] ?? "";
-  const rawName = disposition.match(/filename="([^"]+)"/i)?.[1] ?? "recording.audio";
-  return {
-    metadata,
-    bytes: filePart.body,
-    filename: safeFilename(rawName),
-    mimeType: filePart.headers["content-type"] || "application/octet-stream",
-  };
+  byteCount: number;
 }
 
-export function parseMultipart(body: Buffer, boundary: string): MultipartPart[] {
-  const marker = Buffer.from(`--${boundary}`);
-  const crlfMarker = Buffer.from(`\r\n--${boundary}`);
-  const lfMarker = Buffer.from(`\n--${boundary}`);
-  const parts: MultipartPart[] = [];
-  let markerOffset = body.indexOf(marker);
-  while (markerOffset >= 0) {
-    let offset = markerOffset + marker.length;
-    if (body.subarray(offset, offset + 2).equals(Buffer.from("--"))) break;
-    if (body.subarray(offset, offset + 2).equals(Buffer.from("\r\n"))) offset += 2;
-    else if (body[offset] === 0x0a) offset += 1;
-    else break;
-    const nextCRLF = body.indexOf(crlfMarker, offset);
-    const nextLF = body.indexOf(lfMarker, offset);
-    const next = nextCRLF < 0 ? nextLF : nextLF < 0 ? nextCRLF : Math.min(nextCRLF, nextLF);
-    if (next < 0) break;
-    const segment = body.subarray(offset, next);
-    const crlfSeparator = segment.indexOf("\r\n\r\n");
-    const lfSeparator = segment.indexOf("\n\n");
-    const separator = crlfSeparator < 0 ? lfSeparator : lfSeparator < 0 ? crlfSeparator : Math.min(crlfSeparator, lfSeparator);
-    if (separator >= 0) {
-      const separatorLength = crlfSeparator === separator ? 4 : 2;
-      const headers: Record<string, string> = {};
-      for (const line of segment.subarray(0, separator).toString("utf8").split(/\r?\n/)) {
-        const colon = line.indexOf(":");
-        if (colon > 0) headers[line.slice(0, colon).toLowerCase()] = line.slice(colon + 1).trim();
-      }
-      parts.push({ headers, body: segment.subarray(separator + separatorLength) });
+export async function readImport(request: http.IncomingMessage): Promise<ParsedImport> {
+  const contentType = request.headers["content-type"] ?? "";
+  if (!/^multipart\/form-data\b/i.test(contentType)) throw new Error("Expected multipart/form-data.");
+  const directory = await mkdtemp(path.join(os.tmpdir(), "journal-daemon-import-"));
+  request.journalDaemonTemporaryDirectory = directory;
+  const rawPath = path.join(directory, "source");
+  let metadataText: string | null = null;
+  let file: { filename: string; mimeType: string; done: Promise<void> } | null = null;
+  let byteCount = 0;
+  const digest = createHash("sha256");
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const parser = Busboy({ headers: request.headers, limits: { fields: 1, files: 1, fieldSize: 64 * 1024 } });
+      parser.on("field", (name, value) => {
+        if (name !== "metadata" || metadataText !== null) {
+          reject(new Error("Journal import has unexpected form fields."));
+          return;
+        }
+        metadataText = value;
+      });
+      parser.on("file", (name, stream, info) => {
+        if (name !== "file" || file !== null) {
+          stream.resume();
+          reject(new Error("Journal import has unexpected file parts."));
+          return;
+        }
+        stream.on("data", (chunk: Buffer) => {
+          byteCount += chunk.byteLength;
+          digest.update(chunk);
+        });
+        file = {
+          filename: safeFilename(info.filename || "recording.audio"),
+          mimeType: info.mimeType || "application/octet-stream",
+          done: finished(stream.pipe(createWriteStream(rawPath))),
+        };
+      });
+      parser.once("error", reject);
+      parser.once("fieldsLimit", () => reject(new Error("Journal import has too many form fields.")));
+      parser.once("filesLimit", () => reject(new Error("Journal import has too many file parts.")));
+      parser.once("finish", () => {
+        if (!file) {
+          reject(new Error("Journal import requires metadata and file parts."));
+          return;
+        }
+        void file.done.then(resolve, reject);
+      });
+      request.once("aborted", () => reject(new Error("Journal import was aborted.")));
+      request.pipe(parser);
+    });
+    const uploadedFile = file as { filename: string; mimeType: string; done: Promise<void> } | null;
+    if (!metadataText || !uploadedFile) throw new Error("Journal import requires metadata and file parts.");
+    const metadata = normalizeMetadata(JSON.parse(metadataText));
+    const actualDigest = digest.digest("hex");
+    if (byteCount !== metadata.byteCount) throw new Error("Journal import byte count is invalid.");
+    if (actualDigest !== metadata.sha256 || request.headers["idempotency-key"] !== `sha256:${actualDigest}`) {
+      throw new Error("Journal import digest is invalid.");
     }
-    markerOffset = next + (next === nextCRLF ? 2 : 1);
+    return { metadata, rawPath, directory, filename: uploadedFile.filename, mimeType: uploadedFile.mimeType, byteCount };
+  } catch (error) {
+    await rm(directory, { recursive: true, force: true });
+    delete request.journalDaemonTemporaryDirectory;
+    throw error;
   }
-  return parts;
+}
+
+async function convertToMp3(config: AppConfig, input: ParsedImport): Promise<{ path: string; filename: string; bytes: number }> {
+  const filename = `${path.parse(input.filename).name || "recording"}.mp3`;
+  const output = path.join(input.directory, filename);
+  await runFfmpeg(config.ffmpegBin, ["-y", "-i", input.rawPath, "-vn", "-codec:a", "libmp3lame", "-b:a", "64k", output]);
+  const details = await stat(output);
+  return { path: output, filename, bytes: details.size };
+}
+
+async function runFfmpeg(ffmpegBin: string, args: string[]): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(ffmpegBin, args, { stdio: ["ignore", "ignore", "pipe"] });
+    let stderr = "";
+    child.stderr.on("data", (chunk: Buffer) => { stderr += chunk.toString("utf8"); });
+    child.once("error", (error) => reject(new Error(`Could not run ${ffmpegBin}: ${error.message}`)));
+    child.once("close", (code) => code === 0 ? resolve() : reject(new Error(`${ffmpegBin} failed with exit code ${code ?? "unknown"}: ${stderr.slice(-1_000)}`)));
+  });
 }
 
 function normalizeMetadata(value: unknown): ImportMetadata {
@@ -204,12 +235,13 @@ function normalizeMetadata(value: unknown): ImportMetadata {
   };
 }
 
-async function stageImport(repoPath: string, sha256: string, filename: string, mimeType: string, bytes: Buffer): Promise<StoredContextFile> {
+async function stageImport(repoPath: string, sha256: string, sourcePath: string, filename: string, mimeType: string): Promise<StoredContextFile> {
   const directory = path.join(repoPath, ".context", "journal-daemon-imports");
   await mkdir(directory, { recursive: true });
   const absolutePath = path.join(directory, `${sha256}-${filename}`);
-  await writeFile(absolutePath, bytes);
-  return { kind: "audio", absolutePath, relativePath: path.relative(repoPath, absolutePath), originalName: filename, mimeType, fileSize: bytes.byteLength };
+  await copyFile(sourcePath, absolutePath);
+  const details = await stat(absolutePath);
+  return { kind: "audio", absolutePath, relativePath: path.relative(repoPath, absolutePath), originalName: filename, mimeType, fileSize: details.size };
 }
 
 function safeFilename(value: string): string {

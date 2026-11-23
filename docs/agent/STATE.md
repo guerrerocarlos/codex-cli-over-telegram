@@ -16,7 +16,7 @@
 - 2026-11-17: pushed source also recognizes audio named `DJI_07_YYYYMMDD_HHMMSS.WAV` and archives it as `YYYYMMDD_HHMMSS.WAV`. This naming rule awaits the same guarded deployment as image ingestion.
 
 - 2026-11-23: the Journal Daemon multipart endpoint at `/journal-daemon/v1/imports` trusts the private Tailscale network rather than a bearer token. It validates the configured bound Telegram group/topic, posts audio there, and archives it through the Journal pipeline. It must remain localhost-bound behind Tailscale Serve, never Funnel or a public proxy.
-- 2026-11-23: a canonical multipart import from `air15` was accepted with HTTP `201` after Tailscale Serve activation. The bridge parser now has a wire-format contract test and accepts both CRLF and LF multipart boundary layouts. Oversized media remains subject to `JOURNAL_INGEST_MAX_BYTES`.
+- 2026-11-23: a canonical multipart import from `air15` was accepted with HTTP `201` after Tailscale Serve activation. The bridge streams raw Journal Daemon multipart uploads to temporary disk, validates the source digest, converts audio to 64 kbps MP3 with ffmpeg, then sends and archives the MP3. Raw uploads have no application byte cap; temporary disk capacity and Telegram's MP3 upload limit remain operational bounds.
 
 - Per-topic `/reasoning` overrides are stored in `topic_bindings.reasoning_effort` (NULL inherits Codex config), passed to exec and app-server, and included in fleet exports. Active turns are unchanged. Implementation verified on 2026-10-16; deployment requires an external shell because the running service has NoNewPrivileges enabled.
 
