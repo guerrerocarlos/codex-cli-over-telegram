@@ -1,5 +1,21 @@
 # Agent Decisions
 
+## 2026-11-24: Quiet Output and Explicit Session Lifetime
+
+Hide raw execution messages by default without stripping code from agent-to-human
+messages. Keep the existing text-only filter separate; a global `TELEGRAM_TOOL_OUTPUT`
+opt-in restores technical run messages. Preserve approvals, failures and generated media.
+
+Retain one app-server client per binding after successful turns. Do not share a process
+across chat scopes because manager MCP environment and permission context are per session.
+Reuse only when thread and launch/settings fingerprints match; otherwise reconnect.
+There is no idle eviction: `/close`, `/new`, errors, settings changes and shutdown own
+disposal. Idle sessions release execution slots. This does not yet provide native goal
+continuation or asynchronous question delivery between turns.
+
+Pin the bridge CLI as an exact npm dependency for reproducible deployments, retaining
+explicit `CODEX_BIN` overrides. Do not silently replace a host-wide CLI installation.
+
 ## Explicit File Delivery
 
 Deliver arbitrary requested documents through an explicit manager MCP `send_file`

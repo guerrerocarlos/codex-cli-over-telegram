@@ -4,6 +4,25 @@ Run Codex from Telegram.
 
 Each Telegram topic can be bound to a different folder, so one Telegram group can control many repos or worktrees at the same time.
 
+## Quiet Output and Persistent Sessions
+
+Execution logs (commands, raw output and changed-file notices) are hidden by default.
+Agent messages, including code examples, approvals, failures and generated files/images
+remain visible. Set `TELEGRAM_TOOL_OUTPUT=true` to opt into execution logs globally;
+`/textonly on` is a separate per-topic filter that also removes agent code fences.
+
+OpenAI app-server connections stay open between successful turns, with no idle timeout.
+Use `/close` to close this topic's idle connection without deleting conversation history;
+the next prompt reconnects and resumes it. `/new` closes the connection and resets context.
+Both refuse while a run is queued/running. Errors, interruption, shutdown and changed
+session settings can also close a connection. Idle connections use memory but do not
+hold a run-queue slot. `/compact` reuses an existing idle connection.
+
+The repository pins `@openai/codex` to `0.172.0`. With `CODEX_BIN` unset the bridge uses
+`node_modules/.bin/codex`; explicit paths still override it. Existing deployments pointing
+at `/usr/bin/codex` must switch explicitly, as described in [the runbook](docs/agent/RUNBOOK.md).
+This session reuse is groundwork for question/goal support, not autonomous goal scheduling.
+
 ## Agent File Delivery
 
 Ask the agent to send a file, for example "Send me the report as a PDF". Codex runs
@@ -308,7 +327,7 @@ TELEGRAM_APPROVAL_CHAT_ID=
 TELEGRAM_APPROVAL_MESSAGE_THREAD_ID=0
 ALLOWED_REPO_ROOTS=/path/to/allowed/repos
 DATABASE_PATH=/path/to/service-home/.local/state/codex-cli-over-telegram/state.sqlite
-CODEX_BIN=codex
+CODEX_BIN=./node_modules/.bin/codex
 CODEX_BACKEND=app-server
 DEFAULT_MODEL_PROVIDER=openai
 OPENAI_TIERED_MODELS=gpt-5.5

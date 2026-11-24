@@ -1,5 +1,44 @@
 # Agent Runbook
 
+## Pinned CLI and Persistent Sessions
+
+`npm ci` installs repository-pinned Codex 0.172.0. `CODEX_BIN` defaults to the repository
+executable, but an explicit environment value wins. The existing system service was
+verified to use `/usr/bin/codex` (0.163.0) on 2026-11-24. From a normal host shell,
+after active Telegram tasks drain, switch that deployment and run the guarded update:
+
+```bash
+cd /home/gnu/codex-cli-over-telegram
+sudo sed -i 's|^CODEX_BIN=.*|CODEX_BIN=/home/gnu/codex-cli-over-telegram/node_modules/.bin/codex|' /etc/codex-cli-over-telegram/env
+./scripts/codex-service.sh update
+./node_modules/.bin/codex --version
+curl --fail --silent http://127.0.0.1:8787/health
+```
+
+The env edit above assumes the existing `CODEX_BIN` entry verified during this task.
+Do not bypass active-run checks or `NoNewPrivileges`; the Telegram-launched process
+cannot elevate to change the root-owned environment or restart the service. Verify the
+deployed commit and `telegramBotStarted`, then try two messages and `/close` in a test topic.
+Rollback the executable selection by restoring `CODEX_BIN=/usr/bin/codex` and performing
+a guarded restart. The existing nightly updater targets the system CLI, not this pinned
+dependency; future bridge CLI upgrades must update package.json and package-lock.json.
+
+`TELEGRAM_TOOL_OUTPUT` defaults to false, independent of the per-topic text-only setting.
+Set it to true and restart only when raw execution messages are wanted globally.
+Human messages, approvals, failures and media delivery are not suppressed by this switch.
+
+Successful OpenAI turns retain one app-server connection per topic. There is no idle TTL.
+`/close` frees an idle connection and preserves history; `/new` also resets the thread.
+Neither command interrupts queued/running work. Failed/abandoned turns, settings changes,
+provider changes on the next run and service shutdown dispose connections. Stored thread
+IDs survive restarts, but live connections do not. Watch process memory for large fleets.
+Goal continuation and asynchronous question routing are not implemented by this change.
+Unmanaged autonomous turns are interrupted until a goal scheduler and output routing exist.
+
+Verification: `npm test`, `npm run build`, `node --test tests/*.test.mjs`. On 2026-11-24,
+30 tests passed and a real 0.172.0 app-server completed two read-only turns on one
+connection. Production activation and live Telegram acceptance remain pending.
+
 ## Agent File Delivery
 
 Use `telegram_manager.send_file` with `topic` (exact topic ID as a string, including
@@ -125,7 +164,8 @@ Inside a bound topic, use:
 /textonly on
 ```
 
-This hides technical execution output and diffs from that topic. Use `/textonly off` to restore normal technical output.
+This additionally removes code fences from agent prose in that topic. Use `/textonly off`
+to restore agent code examples. Execution logs remain hidden unless `TELEGRAM_TOOL_OUTPUT=true`.
 
 If a topic reports `Reconnecting...`, inspect that topic's recent runs in `data/state.sqlite`. App-server `error` notifications can be retry notices; only `turn/completed` determines the turn's final status. Do not replay printer cron jobs automatically because they may duplicate physical output.
 

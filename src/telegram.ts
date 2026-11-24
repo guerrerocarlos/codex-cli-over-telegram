@@ -855,7 +855,7 @@ export function createTelegramBot(
       ctx,
       requested
         ? "Text-only mode enabled. The agent will hide command output, changed-file notices, and diffs while keeping plain-language updates."
-        : "Text-only mode disabled. Command output and diffs will be shown normally.",
+        : "Text-only mode disabled. Agent messages can include code blocks. Execution logs follow TELEGRAM_TOOL_OUTPUT.",
       config,
     );
   });
@@ -875,6 +875,8 @@ export function createTelegramBot(
     if (!binding) {
       return;
     }
+    if (!(await ensureNoActiveRun(ctx, config, storage, binding))) return;
+    codex.closeSession?.(binding.id);
     storage.updateBindingThread(binding.id, null);
     storage.audit({
       telegramUserId: ctx.from?.id ?? null,
@@ -884,6 +886,18 @@ export function createTelegramBot(
       details: { bindingId: binding.id },
     });
     await reply(ctx, "Started a fresh agent thread for this topic. The next prompt will use clean context.", config);
+  });
+
+  bot.command("close", async (ctx) => {
+    const binding = await requireBinding(ctx, config, storage);
+    if (!binding || !(await ensureNoActiveRun(ctx, config, storage, binding))) return;
+    const closed = codex.closeSession?.(binding.id) ?? false;
+    storage.audit({ telegramUserId: ctx.from?.id ?? null, chatId: binding.chatId,
+      messageThreadId: binding.messageThreadId, eventType: "session_closed",
+      details: { bindingId: binding.id, closed } });
+    await reply(ctx, closed
+      ? "Closed the app-server connection. Your conversation is saved and will resume on the next prompt."
+      : "No open app-server connection for this topic. Your conversation is unchanged.", config);
   });
 
   bot.command("compact", async (ctx) => {
@@ -2988,7 +3002,7 @@ async function executeRun(
 
       if (event.type === "command_started") {
         await flushAgentMessagesBeforeProgress();
-        if (!binding.plainTextOnly) {
+        if (config.telegramToolOutput && !binding.plainTextOnly) {
           await sendText(bot, config, binding, codeBlock(truncateText(event.text, 900), "bash"));
         }
         continue;
@@ -2996,7 +3010,7 @@ async function executeRun(
 
       if (event.type === "command_completed") {
         await flushAgentMessagesBeforeProgress();
-        if (!binding.plainTextOnly && event.text.trim()) {
+        if (config.telegramToolOutput && !binding.plainTextOnly && event.text.trim()) {
           await sendText(bot, config, binding, codeBlock(truncateText(event.text, 1200)));
         }
         continue;
@@ -3010,7 +3024,7 @@ async function executeRun(
             changedImagePaths.add(imagePath);
           }
         }
-        if (!binding.plainTextOnly) {
+        if (config.telegramToolOutput && !binding.plainTextOnly) {
           await sendText(bot, config, binding, `Changed:\n${codeBlock(event.text)}`);
         }
         continue;
@@ -4545,6 +4559,7 @@ function helpText(): string {
     "/topic - rename this Telegram topic to the bound folder name",
     "/new - start a fresh agent thread with clean context",
     "/compact - compact this topic's Codex thread when using OpenAI",
+    "/close - close the idle app-server connection, keeping conversation history",
     "/dashboard - show all topic activity",
     "/topics - list all bound topics",
     "/todo - show open work items plus running, queued, and failed runs",
@@ -4592,6 +4607,7 @@ export function telegramCommandMenu(): Array<{ command: string; description: str
     { command: "textonly", description: "Hide technical output in this topic" },
     { command: "topic", description: "Rename this Telegram topic" },
     { command: "new", description: "Start a fresh agent thread" },
+    { command: "close", description: "Close idle Codex connection, keep history" },
     { command: "compact", description: "Compact OpenAI thread" },
     { command: "dashboard", description: "Show topic activity" },
     { command: "topics", description: "List managed topic bindings" },

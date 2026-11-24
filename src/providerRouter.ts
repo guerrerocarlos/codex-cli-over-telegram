@@ -8,7 +8,21 @@ export class ProviderRouterBackend implements CodexBackend {
   ) {}
 
   run(request: CodexRunRequest): AsyncIterable<CodexRunEvent> {
+    if (request.modelProvider !== "openai") {
+      this.openaiBackend.closeSession?.(request.bindingId);
+    }
     return this.backendFor(request).run(request);
+  }
+
+  closeSession(bindingId: number): boolean {
+    return [this.openaiBackend, this.xaiBackend, this.claudeBackend]
+      .map((backend) => backend.closeSession?.(bindingId) ?? false).some(Boolean);
+  }
+
+  shutdown(): void {
+    for (const backend of [this.openaiBackend, this.xaiBackend, this.claudeBackend]) {
+      backend.shutdown?.();
+    }
   }
 
   interrupt(bindingId: number): Promise<boolean> {

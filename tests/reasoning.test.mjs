@@ -71,6 +71,7 @@ test('app-server applies override and resolves default for resumed threads', asy
     for await (const event of backend.run({ ...bindingInput(1), bindingId: 1,
       prompt: 'test', codexThreadId: 'thread-test', model: null, modelServiceTier: null,
       reasoningEffort, approvalPolicy: 'never', restrictedToRepo: true, planMode: false })) events.push(event);
+    backend.shutdown();
     assert.equal(events.at(-1).type, 'completed', JSON.stringify(events));
     const actual = JSON.parse(events.at(-1).finalMessage);
     assert.equal(actual.effort, reasoningEffort ?? 'medium');
@@ -86,6 +87,7 @@ test('app-server passes every Telegram manager override with its config flag', a
   for await (const event of backend.run({ ...bindingInput(1), bindingId: 1,
     prompt: 'test', codexThreadId: null, model: null, modelServiceTier: null,
     reasoningEffort: null, approvalPolicy: 'never', restrictedToRepo: false, planMode: false })) events.push(event);
+  backend.shutdown();
   assert.equal(events.at(-1).type, 'completed', JSON.stringify(events));
   const actual = JSON.parse(events.at(-1).finalMessage);
   const managerOverrides = actual.args.filter((arg) => arg.startsWith('mcp_servers.telegram_manager.'));

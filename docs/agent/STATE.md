@@ -1,5 +1,13 @@
 # Agent State
 
+- 2026-11-24: implemented quiet execution output by default (`TELEGRAM_TOOL_OUTPUT=false`),
+  retained per-topic OpenAI connections, `/close`, guarded `/new`, compaction reuse and
+  connection cleanup. Pinned and installed repository CLI 0.172.0. All 30 regression
+  tests and a real two-turn same-connection smoke test passed. The live service still
+  selects `/usr/bin/codex` 0.163.0; activation requires the host-shell env switch and
+  guarded update in RUNBOOK because `NoNewPrivileges` blocks elevation here.
+  Question buttons and native goal continuation remain unimplemented.
+
 - 2026-11-24: audited installed Codex 0.163.0 against stable 0.172.0. Questions
   are currently empty-answered or dropped; native goals need multi-turn session
   support. See [feature audit](CODEX_FEATURE_AUDIT_2026-11-24.md) for the proposed

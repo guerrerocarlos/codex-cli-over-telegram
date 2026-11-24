@@ -38,6 +38,7 @@ export interface AppConfig {
   maxTelegramMessageChars: number;
   telegramSendIntervalMs: number;
   telegramAgentStreaming: boolean;
+  telegramToolOutput: boolean;
   telegramStreamFlushMs: number;
   telegramStreamMinChars: number;
   maxTelegramFileBytes: number;
@@ -222,6 +223,7 @@ export function loadConfig(): AppConfig {
     ...parseNumberListFile(extraTelegramChatsFile, "ALLOWED_TELEGRAM_CHAT_IDS_FILE"),
   ]);
   const approvalTelegramChatId = optionalInteger("TELEGRAM_APPROVAL_CHAT_ID") ?? [...allowedTelegramChatIds][0] ?? null;
+  const codexBin = optional("CODEX_BIN", localBin("codex"));
 
   return {
     telegramBotToken: required("TELEGRAM_BOT_TOKEN"),
@@ -234,7 +236,7 @@ export function loadConfig(): AppConfig {
     allowedRepoRoots: parseRepoRoots(),
     databasePath,
     supersededRunIds: parseNumberList("CODEX_SUPERSEDED_RUN_IDS"),
-    codexBin: optional("CODEX_BIN", "codex"),
+    codexBin: codexBin.includes("/") ? path.resolve(expandHome(codexBin)) : codexBin,
     codexBackend: parseCodexBackend(),
     defaultModelProvider: parseModelProvider("DEFAULT_MODEL_PROVIDER", "openai"),
     xaiProviderId: optional("XAI_CODEX_PROVIDER_ID", "xai"),
@@ -254,6 +256,7 @@ export function loadConfig(): AppConfig {
     maxTelegramMessageChars: parseInteger("MAX_TELEGRAM_MESSAGE_CHARS", 3500),
     telegramSendIntervalMs: parseInteger("TELEGRAM_SEND_INTERVAL_MS", 3500),
     telegramAgentStreaming: parseBoolean("TELEGRAM_AGENT_STREAMING", true),
+    telegramToolOutput: parseBoolean("TELEGRAM_TOOL_OUTPUT", false),
     telegramStreamFlushMs: parseInteger("TELEGRAM_STREAM_FLUSH_MS", 1000),
     telegramStreamMinChars: parseInteger("TELEGRAM_STREAM_MIN_CHARS", 120),
     maxTelegramFileBytes: parseInteger("MAX_TELEGRAM_FILE_BYTES", 20 * 1024 * 1024),

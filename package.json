@@ -25,6 +25,7 @@
   "dependencies": {
     "@agentclientprotocol/claude-agent-acp": "^0.46.0",
     "@agentclientprotocol/sdk": "^0.26.0",
+    "@openai/codex": "0.172.0",
     "better-sqlite3": "^12.5.0",
     "busboy": "^1.6.0",
     "dotenv": "^17.2.3",

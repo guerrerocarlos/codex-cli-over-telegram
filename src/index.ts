@@ -42,6 +42,7 @@ async function main(): Promise<void> {
   const shutdown = async (signal: string) => {
     logger.info("shutting down", { signal });
     cronScheduler.stop();
+    codex.shutdown();
     healthServer.close();
     try {
       await bot.stop();

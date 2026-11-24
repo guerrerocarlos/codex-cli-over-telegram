@@ -56,8 +56,14 @@ export class AppServerClient {
     });
 
     this.proc.once("error", (error) => {
+      this.closed = true;
       this.rejectAll(error);
       this.notifyClosed(error);
+    });
+
+    this.proc.stdin.on("error", (error) => {
+      this.rejectAll(error);
+      this.close();
     });
 
     this.proc.once("close", (code, signal) => {
@@ -112,10 +118,9 @@ export class AppServerClient {
 
     const id = this.nextId++;
     const payload = params === undefined ? { id, method } : { id, method, params };
-    this.write(payload);
-
     return new Promise((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
+      this.write(payload);
     });
   }
 
@@ -136,6 +141,9 @@ export class AppServerClient {
       return;
     }
     this.closed = true;
+    const error = new Error("codex app-server connection closed");
+    this.rejectAll(error);
+    this.notifyClosed(error);
     this.proc.kill("SIGTERM");
   }
 
@@ -194,6 +202,7 @@ export class AppServerClient {
   }
 
   private write(payload: unknown): void {
+    if (this.closed) return;
     this.proc.stdin.write(`${JSON.stringify(payload)}\n`);
   }
 

@@ -26,6 +26,13 @@ interface ActiveTurn {
   turnId: string;
 }
 
+interface AppServerSession {
+  client: AppServerClient;
+  threadId: string | null;
+  fingerprint: string;
+  busy: boolean;
+}
+
 interface PendingPermissionApproval {
   client: AppServerClient;
   requestId: number | string;
@@ -58,6 +65,7 @@ interface Notification {
 }
 
 export class CodexAppServerBackend implements CodexBackend {
+  private readonly sessions = new Map<number, AppServerSession>();
   private readonly active = new Map<number, ActiveTurn>();
   private readonly pendingPermissionApprovals = new Map<string, PendingPermissionApproval>();
   private readonly pendingElicitationApprovals = new Map<string, PendingElicitationApproval>();
@@ -68,14 +76,80 @@ export class CodexAppServerBackend implements CodexBackend {
 
   constructor(private readonly config: AppConfig) {}
 
+  closeSession(bindingId: number): boolean {
+    const session = this.sessions.get(bindingId);
+    if (!session) return false;
+    if (session.busy) throw new Error("The session is busy. Stop the active run before closing it.");
+    this.disposeSession(bindingId, session);
+    return true;
+  }
+
+  shutdown(): void {
+    for (const [bindingId, session] of this.sessions) this.disposeSession(bindingId, session);
+  }
+
+  private clearPendingApprovals(client: AppServerClient): void {
+    for (const pending of [this.pendingPermissionApprovals, this.pendingElicitationApprovals]) {
+      for (const [id, approval] of pending) {
+        if (approval.client === client) {
+          clearTimeout(approval.timeout);
+          pending.delete(id);
+        }
+      }
+    }
+  }
+
+  private disposeSession(bindingId: number, session: AppServerSession): void {
+    if (this.sessions.get(bindingId) === session) this.sessions.delete(bindingId);
+    this.clearPendingApprovals(session.client);
+    session.client.close();
+  }
+
   async *run(request: CodexRunRequest): AsyncIterable<CodexRunEvent> {
-    const client = new AppServerClient(this.config.codexBin, this.appServerOptions(request));
+    const options = this.appServerOptions(request);
+    const fingerprint = JSON.stringify([options, request.repoPath, request.chatId, request.messageThreadId,
+      request.model, request.planMode, request.sandboxMode, request.approvalPolicy]);
+    let session = this.sessions.get(request.bindingId);
+    if (session?.busy) {
+      yield { type: "failed", error: "This topic already has an active app-server operation." };
+      return;
+    }
+    if (session && (session.fingerprint !== fingerprint || session.threadId !== request.codexThreadId)) {
+      this.disposeSession(request.bindingId, session);
+      session = undefined;
+    }
+    const isNewSession = !session;
+    if (!session) {
+      session = { client: new AppServerClient(this.config.codexBin, options),
+        threadId: null, fingerprint, busy: false };
+      const created = session;
+      this.sessions.set(request.bindingId, created);
+      created.client.onClose(() => this.disposeSession(request.bindingId, created));
+      created.client.onServerRequest((rpc, client) => {
+        if (!created.busy) this.declineServerRequest(rpc.method, rpc.id, rpc.params, client);
+      });
+      created.client.onNotification((notification) => {
+        const params = notification.params as any;
+        if (!created.busy && notification.method === "turn/started" && params?.turn?.id) {
+          // Autonomous turns need a scheduler/output sink before they can run unattended.
+          void created.client.request("turn/interrupt", { threadId: params.threadId,
+            turnId: params.turn.id }).catch((error) => {
+            logger.warn("failed to interrupt unmanaged app-server turn", { error: String(error) });
+            this.disposeSession(request.bindingId, created);
+          });
+        }
+      });
+    }
+    session.busy = true;
+    const client = session.client;
     const events = new AsyncQueue<CodexRunEvent>();
+    let completed = false;
     let finalMessage = "";
     let threadId = request.codexThreadId;
     let turnId: string | null = null;
+    const earlyNotifications: Notification[] = [];
 
-    client.onServerRequest((serverRequest, rpcClient) => {
+    const unsubscribeRequests = client.onServerRequest((serverRequest, rpcClient) => {
       if (serverRequest.method === "item/permissions/requestApproval") {
         this.requestPermissionApproval(serverRequest.id, serverRequest.params, rpcClient, events);
         return;
@@ -99,7 +173,17 @@ export class CodexAppServerBackend implements CodexBackend {
       this.declineServerRequest(serverRequest.method, serverRequest.id, serverRequest.params, rpcClient);
     });
 
-    const unsubscribe = client.onNotification((notification) => {
+    const handleNotification = (notification: Notification) => {
+      if (!turnId) {
+        earlyNotifications.push(notification);
+        return;
+      }
+      if (notification.method === "turn/started" && notification.params?.threadId === threadId &&
+          notification.params?.turn?.id && notification.params.turn.id !== turnId) {
+        void client.request("turn/interrupt", { threadId, turnId: notification.params.turn.id })
+          .catch(() => this.disposeSession(request.bindingId, session));
+        return;
+      }
       const mapped = this.mapNotification(notification, threadId, turnId);
       if (!mapped) {
         return;
@@ -114,20 +198,24 @@ export class CodexAppServerBackend implements CodexBackend {
       if (mapped.type === "completed" || mapped.type === "failed") {
         events.close();
       }
-    });
+    };
+    const unsubscribe = client.onNotification(handleNotification);
     const unsubscribeClose = client.onClose((error) => {
       events.push({ type: "failed", error: error.message });
       events.close();
     });
 
     try {
-      await client.initialize();
-      const threadResponse = await this.startOrResumeThread(client, request);
+      if (isNewSession) await client.initialize();
+      const threadResponse = isNewSession
+        ? await this.startOrResumeThread(client, request)
+        : { thread: { id: session.threadId ?? undefined } };
 
       threadId = threadResponse.thread?.id ?? request.codexThreadId;
       if (!threadId) {
         throw new Error("app-server did not return a thread id");
       }
+      session.threadId = threadId;
 
       events.push({ type: "started", threadId, text: `Started app-server thread ${threadId}` });
 
@@ -152,8 +240,11 @@ export class CodexAppServerBackend implements CodexBackend {
       }
 
       this.active.set(request.bindingId, { client, threadId, turnId });
+      for (const notification of earlyNotifications) handleNotification(notification);
+      earlyNotifications.length = 0;
 
       for await (const event of events) {
+        if (event.type === "completed") completed = true;
         if (event.type === "completed" && !event.finalMessage) {
           yield { type: "completed", finalMessage };
           continue;
@@ -168,8 +259,11 @@ export class CodexAppServerBackend implements CodexBackend {
     } finally {
       unsubscribe();
       unsubscribeClose();
+      unsubscribeRequests();
       this.active.delete(request.bindingId);
-      client.close();
+      this.clearPendingApprovals(client);
+      session.busy = false;
+      if (!completed) this.disposeSession(request.bindingId, session);
     }
   }
 
@@ -201,16 +295,28 @@ export class CodexAppServerBackend implements CodexBackend {
   }
 
   async compactThread(threadId: string): Promise<void> {
-    const client = new AppServerClient(this.config.codexBin, this.appServerOptions());
+    const cached = [...this.sessions.entries()].find(([, session]) => session.threadId === threadId);
+    if (cached?.[1].busy) throw new Error("The session is busy. Wait for the active run to finish.");
+    const client = cached?.[1].client ?? new AppServerClient(this.config.codexBin, this.appServerOptions());
+    if (cached) cached[1].busy = true;
     let settled = false;
+    let succeeded = false;
+    const unsubscribeRequests = client.onServerRequest((rpc, rpcClient) => {
+      this.declineServerRequest(rpc.method, rpc.id, rpc.params, rpcClient);
+    });
 
     try {
-      await client.initialize();
+      if (!cached) {
+        await client.initialize();
+        await client.request("thread/resume", { threadId });
+      }
       let cleanup = () => undefined;
 
       const completed = new Promise<void>((resolve, reject) => {
         const timeout = setTimeout(() => {
           if (!settled) {
+            settled = true;
+            cleanup();
             reject(new Error("Timed out waiting for app-server compaction to finish"));
           }
         }, 5 * 60_000);
@@ -256,20 +362,34 @@ export class CodexAppServerBackend implements CodexBackend {
           }
         });
 
+        const unsubscribeClose = client.onClose((error) => {
+          settled = true;
+          cleanup();
+          reject(error);
+        });
+
         cleanup = () => {
           clearTimeout(timeout);
           unsubscribe();
+          unsubscribeClose();
         };
       });
+      // A disconnect can reject completion while the start RPC is still pending.
+      void completed.catch(() => undefined);
 
       try {
         await client.request("thread/compact/start", { threadId });
         await completed;
+        succeeded = true;
       } finally {
         cleanup();
       }
     } finally {
-      client.close();
+      unsubscribeRequests();
+      if (cached) {
+        cached[1].busy = false;
+        if (!succeeded) this.disposeSession(cached[0], cached[1]);
+      } else client.close();
     }
   }
 
@@ -484,7 +604,8 @@ export class CodexAppServerBackend implements CodexBackend {
     if (params?.threadId && threadId && params.threadId !== threadId) {
       return null;
     }
-    if (params?.turnId && turnId && params.turnId !== turnId) {
+    const notificationTurnId = params?.turnId ?? params?.turn?.id;
+    if (notificationTurnId && turnId && notificationTurnId !== turnId) {
       return null;
     }
 
