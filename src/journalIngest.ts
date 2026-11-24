@@ -2,19 +2,53 @@ import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
 import { createWriteStream } from "node:fs";
 import { copyFile, mkdir, mkdtemp, rm, stat } from "node:fs/promises";
+import { execFile } from "node:child_process";
 import { finished } from "node:stream/promises";
+import { promisify } from "node:util";
 import os from "node:os";
 import path from "node:path";
 import Busboy from "busboy";
 import type http from "node:http";
 import { Bot, InputFile } from "grammy";
 import type { AppConfig } from "./config.js";
-import { archiveJournalMedia, isJournalMedia, loadJournalConfig } from "./journal.js";
+import { archiveJournalMedia, isJournalMedia, loadJournalConfig, type JournalArchiveResult } from "./journal.js";
 import { logger } from "./logger.js";
 import type { Storage } from "./storage.js";
 import type { StoredContextFile, TelegramFileRef } from "./telegramMedia.js";
 
 export type JournalIngestHandler = (request: http.IncomingMessage, response: http.ServerResponse) => Promise<void>;
+const execFileAsync = promisify(execFile);
+
+export function githubTreeUrl(remote: string, entryPath: string): string | null {
+  const normalized = remote.trim().replace(/\.git$/, "");
+  const match = normalized.match(/^(?:git@github\.com:|https:\/\/github\.com\/)([^/]+\/[^/]+)$/);
+  return match ? `https://github.com/${match[1]}/tree/main/${entryPath}` : null;
+}
+
+async function journalEntryUrl(repoPath: string, entryPath: string): Promise<string | null> {
+  try {
+    const { stdout } = await execFileAsync("git", ["-C", repoPath, "remote", "get-url", "origin"]);
+    return githubTreeUrl(stdout, entryPath);
+  } catch {
+    return null;
+  }
+}
+
+export function formatJournalDaemonArchiveResult(result: JournalArchiveResult, entryUrl: string | null): string {
+  const lines = result.duplicate
+    ? ["USB Drive Audio was already archived.", "", entryUrl ?? `Entry: ${result.entryPath}`]
+    : [
+        "USB Drive Audio received.",
+        "",
+        entryUrl ?? `Entry: ${result.entryPath}`,
+        entryUrl ? null : result.transcriptPath ? `Transcript: ${result.transcriptPath}` : "Transcript: unavailable",
+        entryUrl ? null : result.commitHash ? `Commit: ${result.commitHash}` : null,
+        entryUrl ? null : result.pushed ? "GitHub: pushed" : "GitHub: push pending",
+      ].filter((line): line is string => line !== null);
+  if (result.transcriptionError) lines.push("", `Transcription failed and can be retried: ${result.transcriptionError}`);
+  if (result.pushError) lines.push("", `Push failed and the local commit was retained: ${result.pushError}`);
+  return lines.join("\n");
+}
 
 interface ImportMetadata {
   version: 1;
@@ -106,6 +140,18 @@ export function createJournalIngestHandler(input: {
         eventType: result.duplicate ? "journal_daemon_import_duplicate" : "journal_daemon_import_archived",
         details: { sha256: metadata.sha256, sourceId: metadata.sourceId, entryPath: result.entryPath },
       });
+      try {
+        const entryUrl = result.pushed ? await journalEntryUrl(binding.repoPath, result.entryPath) : null;
+        await input.bot.api.sendMessage(binding.chatId, formatJournalDaemonArchiveResult(result, entryUrl), {
+          message_thread_id: binding.messageThreadId,
+          disable_notification: true,
+        });
+      } catch (notificationError) {
+        logger.warn("journal daemon import result notification failed", {
+          error: notificationError instanceof Error ? notificationError.message : String(notificationError),
+          sha256: metadata.sha256,
+        });
+      }
       respond(response, 201, { ok: true, sha256: metadata.sha256, importId: importId(metadata.sha256) });
     } catch (error) {
       logger.warn("journal daemon import failed", { error: error instanceof Error ? error.message : String(error) });
