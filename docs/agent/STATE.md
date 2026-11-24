@@ -1,5 +1,10 @@
 # Agent State
 
+- 2026-11-24: audited installed Codex 0.163.0 against stable 0.172.0. Questions
+  are currently empty-answered or dropped; native goals need multi-turn session
+  support. See [feature audit](CODEX_FEATURE_AUDIT_2026-11-24.md) for the proposed
+  integration and acceptance plan. No upgrade or runtime changes made.
+
 - 2026-11-21: implemented explicit `telegram_manager.send_file` delivery for regular
   repo files up to 20 MiB, with captions, destination binding validation, queued
   sends, and Telegram message ID confirmation. Deployment pending external-shell
