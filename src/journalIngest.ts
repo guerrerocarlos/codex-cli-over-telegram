@@ -2,37 +2,19 @@ import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
 import { createWriteStream } from "node:fs";
 import { copyFile, mkdir, mkdtemp, rm, stat } from "node:fs/promises";
-import { execFile } from "node:child_process";
 import { finished } from "node:stream/promises";
-import { promisify } from "node:util";
 import os from "node:os";
 import path from "node:path";
 import Busboy from "busboy";
 import type http from "node:http";
 import { Bot, InputFile } from "grammy";
 import type { AppConfig } from "./config.js";
-import { archiveJournalMedia, isJournalMedia, loadJournalConfig, type JournalArchiveResult } from "./journal.js";
+import { archiveJournalMedia, isJournalMedia, journalEntryUrl, loadJournalConfig, type JournalArchiveResult } from "./journal.js";
 import { logger } from "./logger.js";
 import type { Storage } from "./storage.js";
 import type { StoredContextFile, TelegramFileRef } from "./telegramMedia.js";
 
 export type JournalIngestHandler = (request: http.IncomingMessage, response: http.ServerResponse) => Promise<void>;
-const execFileAsync = promisify(execFile);
-
-export function githubTreeUrl(remote: string, entryPath: string): string | null {
-  const normalized = remote.trim().replace(/\.git$/, "");
-  const match = normalized.match(/^(?:git@github\.com:|https:\/\/github\.com\/)([^/]+\/[^/]+)$/);
-  return match ? `https://github.com/${match[1]}/tree/main/${entryPath}` : null;
-}
-
-async function journalEntryUrl(repoPath: string, entryPath: string): Promise<string | null> {
-  try {
-    const { stdout } = await execFileAsync("git", ["-C", repoPath, "remote", "get-url", "origin"]);
-    return githubTreeUrl(stdout, entryPath);
-  } catch {
-    return null;
-  }
-}
 
 export function formatJournalDaemonArchiveResult(result: JournalArchiveResult, entryUrl: string | null): string {
   const lines = result.duplicate

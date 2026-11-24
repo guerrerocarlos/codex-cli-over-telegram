@@ -3,7 +3,8 @@ import { createHash } from "node:crypto";
 import { readFile, rm } from "node:fs/promises";
 import test from "node:test";
 import { PassThrough } from "node:stream";
-import { formatJournalDaemonArchiveResult, githubTreeUrl, readImport } from "../dist/journalIngest.js";
+import { formatJournalDaemonArchiveResult, readImport } from "../dist/journalIngest.js";
+import { formatTelegramAudioArchiveResult, githubTreeUrl } from "../dist/journal.js";
 
 test("formats USB drive archive results for the bound Journal topic", () => {
   const message = formatJournalDaemonArchiveResult({
@@ -28,6 +29,11 @@ test("builds a Journal entry URL from supported GitHub remotes", () => {
   assert.equal(githubTreeUrl("git@github.com:guerrerocarlos/journal.git", entry), "https://github.com/guerrerocarlos/journal/tree/main/entries/2026/11/24/usb-audio");
   assert.equal(githubTreeUrl("https://github.com/guerrerocarlos/journal.git", entry), "https://github.com/guerrerocarlos/journal/tree/main/entries/2026/11/24/usb-audio");
   assert.equal(githubTreeUrl("https://example.com/journal.git", entry), null);
+});
+
+test("formats direct Telegram audio results as a compact Journal link", () => {
+  const message = formatTelegramAudioArchiveResult({ duplicate: false }, "https://github.com/guerrerocarlos/journal/tree/main/entries/example");
+  assert.equal(message, "Telegram Audio received.\n\nhttps://github.com/guerrerocarlos/journal/tree/main/entries/example");
 });
 
 test("streams the journal daemon multipart wire format to a temporary file", async () => {

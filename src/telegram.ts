@@ -44,7 +44,7 @@ import {
   type StoredContextFile,
   type TelegramFileRef,
 } from "./telegramMedia.js";
-import { archiveJournalMedia, isJournalMedia, loadJournalConfig, type JournalConfig } from "./journal.js";
+import { archiveJournalMedia, formatTelegramAudioArchiveResult, isJournalMedia, journalEntryUrl, loadJournalConfig, type JournalConfig } from "./journal.js";
 
 export interface TopicRef {
   chatId: number;
@@ -1389,7 +1389,11 @@ async function handleJournalMediaMessage(
         },
       });
 
-      const lines = result.duplicate
+      const directAudio = ["voice", "audio", "audio-document"].includes(fileRef.kind);
+      const entryUrl = directAudio && result.pushed ? await journalEntryUrl(binding.repoPath, result.entryPath) : null;
+      const lines = directAudio && entryUrl
+        ? formatTelegramAudioArchiveResult(result, entryUrl).split("\n")
+        : result.duplicate
         ? ["Journal media was already archived.", "", `Entry: ${result.entryPath}`]
         : [
             "Journal media archived.",

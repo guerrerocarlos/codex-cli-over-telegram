@@ -14,6 +14,21 @@ import {
 const execFileAsync = promisify(execFile);
 const journalLocks = new Map<string, Promise<void>>();
 
+export function githubTreeUrl(remote: string, entryPath: string): string | null {
+  const normalized = remote.trim().replace(/\.git$/, "");
+  const match = normalized.match(/^(?:git@github\.com:|https:\/\/github\.com\/)([^/]+\/[^/]+)$/);
+  return match ? `https://github.com/${match[1]}/tree/main/${entryPath}` : null;
+}
+
+export async function journalEntryUrl(repoPath: string, entryPath: string): Promise<string | null> {
+  try {
+    const { stdout } = await execFileAsync("git", ["-C", repoPath, "remote", "get-url", "origin"]);
+    return githubTreeUrl(stdout, entryPath);
+  } catch {
+    return null;
+  }
+}
+
 export interface JournalConfig {
   version: 1;
   enabled: boolean;
@@ -65,6 +80,14 @@ export interface JournalArchiveResult {
   transcriptionStatus: JournalTranscriptionStatus;
   transcriptionError: string | null;
   pushError: string | null;
+}
+
+export function formatTelegramAudioArchiveResult(result: JournalArchiveResult, entryUrl: string): string {
+  return [
+    result.duplicate ? "Telegram Audio was already archived." : "Telegram Audio received.",
+    "",
+    entryUrl,
+  ].join("\n");
 }
 
 export interface JournalRecoveryResult {
